@@ -1,0 +1,364 @@
+TASK 1 — DISCOVERY SPIKE: CART HANDOFF FEASIBILITY & MENU CAPTURE
+Kung Fu Tea / kft.orderexperience.net
+Date: 2026-08-17   Target store: 5th Ave, Bk (Bay Ridge) 650c9c3cd73592bc0e0bd50a
+
+================================================================================
+HEADLINE
+================================================================================
+
+A shareable cart deep link EXISTS and works. The handoff model is:
+
+    https://kft.orderexperience.net/{restaurant_id}/menu?order_id={order_id}
+
+We build a cart over the JSON API, then hand the user that one URL. No token in
+the link, no controlled browser, no credentials. This is the recommended model
+and it unblocks Task 5 with the cheapest possible UX.
+
+The mechanism is CLONE-ON-OPEN, not shared-session. Opening the link makes the
+user's own browser create a NEW order that server-side copies our line items.
+They then own an ordinary cart they can edit and pay for natively.
+
+One consequence to design around: the clone drops per-item `for`/`notes`
+values, so the who-ordered-what mapping must be delivered as our own manifest
+alongside the link (details in §4).
+
+Verification status: the server-side half is proven live end to end. The
+client-side half is read verbatim from the site's JS bundle but NOT executed —
+no browser can launch on this machine. See §7. Task 2 should click the link once.
+
+================================================================================
+1. WHAT THE SITE IS
+================================================================================
+
+kft.orderexperience.net is a white-labelled Paytronix OrderExperience storefront
+(page title is literally "Paytronix"; Kung Fu Tea is tenant app 64d157a1e0b9625e4d011c96,
+slug `kft`). It is a Nuxt 3 SPA with SSR disabled — the shell is 4.3 KB with an
+empty <div id="__nuxt">. Nothing is server-rendered.
+
+So there is no HTML to scrape. Automate the JSON API.
+
+    Base URL   https://oxb.pxsweb.com/
+    Auth       ?key=49ace91d8c17daf4d13e61c05883ff3edbd02d1b on every request
+    Bodies     form-encoded on writes; JSON responses
+
+The key is not a credential. It is compiled into the public JS bundle served to
+every anonymous visitor. It identifies the client app, not a user.
+
+Browser automation would additionally have to survive a PerimeterX integration
+(px-cdn.net / px-cloud.net / pxchk.net in the CSP, plus an
+api/v1/orders/{id}/px_challenge endpoint). That challenge sits on the CHECKOUT
+path, not on browse or cart-build — so the work we actually do stays clear of it.
+
+================================================================================
+2. THE HANDOFF INVESTIGATION — WHAT WAS RULED OUT, AND WHY
+================================================================================
+
+The brief asked which of three models is feasible. All three were tested.
+
+(a) SHARED CART URL bound to a session token — NO.
+    Cart identity lives in the browser's localStorage under the key `orders`,
+    as an array of {appId, id, restaurantId, token, isSubmitted, timestamp}.
+    A plain link cannot write another browser's localStorage. There is no
+    "resume this exact order" route that accepts a token for an unsubmitted cart.
+
+    Ruled out concretely:
+      - order.submit_url = https://www.opendining.net/submit/{order_id}
+        looks promising but 302s to /{rid}/menu and DROPS the order id.
+        It carries no cart. Verified.
+      - SPA route /submit/:orderid returns 200 but is the Spreedly payment
+        page; it reads the token from localStorage and assumes the browser
+        already owns the order. Not an adoption path.
+      - ?token= is read only on the /history/:details route, for Pusher
+        auth on order STATUS after submission. Not cart editing.
+
+(b) NATIVE GROUP ORDER — NO. Genuinely disabled, not just UI-gated.
+        POST api/v1/orders  order_kind=group
+        -> 403 "Restaurant does not support group orders."
+    The bundle has full group plumbing (group_token, group_owner_token,
+    join-by-token routes, amount_limit) but the chain has it off server-side.
+
+(c) HAND OVER THE CONTROLLED BROWSER — unnecessary. Do not build this.
+
+WHAT DOES WORK — a fourth model the brief did not list: CLONE-ON-OPEN.
+
+The SPA reads ?order_id= from the URL and rebuilds the cart in the user's own
+session. Two code paths converge on it:
+
+  cold load (the case for someone clicking our link):
+    global middleware `restaurant.client.global` sees an empty restaurant
+    instance -> dispatches restaurant/getInstance -> that action reads
+    router.query.order_id -> dispatches order/create {order_id, restaurantId}
+    -> POST api/v1/orders with order_id + restaurant_id.
+
+  warm navigation:
+    the same middleware's else-branch dispatches order/reorder
+    -> POST api/v1/orders/{new}/reorder/{prev}, then strips order_id from the
+       URL via navigateTo({query: rest}, {replace:true}).
+
+Both clone. The cold-load path is the one that matters, and its server call is
+the one verified below.
+
+================================================================================
+3. LIVE VERIFICATION OF THE CLONE
+================================================================================
+
+Built a two-drink cart with modifiers, then cloned it exactly as the SPA would:
+
+    POST api/v1/orders   order_id=<source>  restaurant_id=<store>  type=takeout
+    -> 200 {"order_id": <new>, "token": <new>}
+
+    source : Thai Tea Milk Cap 7.75 + Taro Slush 6.70   subtotal 14.45
+    clone  : Thai Tea Milk Cap 7.75 + Taro Slush 6.70   subtotal 14.45
+    clone options preserved exactly:
+      Choose A Size: Large .5 | Choose Topping(s): Brown Sugar Wow Boba x1
+      Sugar Level: Half S 50% | Ice Level: Less Ice
+
+Additional properties, all verified:
+
+  - No access_token needed to clone. The order_id alone is sufficient.
+    The link is self-contained.
+  - The link is REUSABLE. Cloned twice: two distinct new order ids, both
+    complete. The source order is untouched after cloning.
+  - Safe on refresh. Each click clones fresh; the source is never consumed.
+    (In-session re-clone is additionally guarded by a reorderId check, and the
+    warm path strips order_id from the URL after handling.)
+  - Works while the store is CLOSED. can_order was false at test time (store
+    opens 11:00) and both cart build and clone still succeeded. The user simply
+    cannot submit until it opens.
+  - Cross-store cloning is NOT blocked: passing a different restaurant_id still
+    copies the items. So the {restaurant_id} in the URL must match the store we
+    priced against, or the user silently gets a differently-priced cart.
+
+================================================================================
+4. THE ONE REAL LIMITATION — PER-DRINK NAMES DO NOT SURVIVE
+================================================================================
+
+This corrects an earlier assumption in docs/task1-site-structure.md.
+
+The API DOES accept and persist per-item `for` and `notes`, even though the
+store's UI flags say otherwise (Bay Ridge has allow_for null, allow_notes false;
+across the 318 customer-visible stores only 16 set allow_notes and none set
+allow_for):
+
+    add item with for="ALICE", notes="for ALICE"
+    -> 200, and GET order returns for="ALICE", notes="for ALICE"
+
+BUT the clone strips them:
+
+    source cart : Taro Slush for="ALICE" | Thai Tea Milk Cap for="BOB"
+    cloned cart : Taro Slush for=null    | Thai Tea Milk Cap for=null
+
+So names are carried on OUR order and lost on THEIR order. Since the handoff is
+inherently a clone, the cart the user actually pays from cannot carry names.
+
+  => Task 5 must print its own manifest (person -> drink -> modifiers -> price)
+     next to the link. This is a permanent design constraint, not a gap that can
+     be closed by finding the right field. Identical drinks for different people
+     will collapse into indistinguishable line items in their cart.
+
+  => Still set `for`/`notes` on our source order anyway. It costs nothing and
+     makes our own order inspectable while debugging.
+
+================================================================================
+5. MENU CAPTURE — DELIVERABLE (a)
+================================================================================
+
+One call returns everything: GET api/v1/restaurants/{id}/menu -> 154 items in
+15 categories for Bay Ridge, 1.1 MB.
+
+Captured and normalised by scripts/fetch_menu.py into:
+    data/menu-650c9c3cd73592bc0e0bd50a.json   Bay Ridge  (TARGET, 154 items)
+    data/menu-650c9c52d73592bc0e0bd5a7.json   Philadelphia (comparison only)
+
+Validated as sufficient: drove a real 6-drink cart build using ONLY fields from
+the snapshot — 6/6 accepted, subtotal $36.05, zero failures.
+
+FIVE MODIFIER AXES (the brief named four; `milk` is real and people do ask for it):
+    Choose A Size        size      min 1 max 1, required
+    Choose Topping(s)    toppings  multiselect, max 0 = UNLIMITED, quantities
+    Sugar Level          sugar     min 0 max 1, OPTIONAL
+    Ice Level            ice       min 0 max 1, OPTIONAL
+    Milk Alternative     milk      Soy Milk +$0.50, on 37 items
+Unmapped one-offs, and they are per-store: a stray `Milk Tea` group at Bay Ridge,
+`Tajin Option` at Philadelphia. Not every item has every group — gift cards, cans
+and food have none. Treat missing groups as normal, not as an error.
+
+TRAPS FOR TASK 3, all confirmed:
+
+  * `size` in the ADD-ITEM payload is a PRICE TIER, not the size option.
+    This bit during this spike: posting size="Large .5" returns
+    400 "Invalid size: Large .5". The correct value comes from item.prices[].name
+    — "Regular" for all 154 Bay Ridge items. "Choose A Size" is an ordinary
+    option group and goes in options[...] like everything else.
+    fetch_menu.py now captures price_tiers/default_price_tier per item so this
+    is never assumed.
+
+  * Option vocabularies are PER ITEM, not global. At Bay Ridge alone: 14 distinct
+    size option-sets, 14 sugar, 6 ice. The upcharge is baked into the option
+    NAME, and the spelling is inconsistent — bare decimal (Large .5), integer
+    (Large 1, Large 1.5), leading zero (Large 0.45), two decimals (Large .75),
+    and one with no space at all (Large.3). 16 distinct size literals at Bay
+    Ridge, 23 across the two stores sampled, all collapsing to just 4 real
+    labels: Medium, Large, Hot, Cold. A cell saying "Large" must be resolved
+    against THAT item's list — fetch_menu.py's per-item `canonical` map does
+    this (e.g. Honey Peach Cream: {"Large": "Large .9"}).
+
+  * "Hot" is a SIZE, not a temperature, and there is no separate hot drink to
+    look up. "Hot Thai Tea" is the Hot option on the iced item — which at Bay
+    Ridge is "Hot .5" on Thai Tea Latte but "Hot .3" on Assam Thai Tea. Another
+    reason the literal must be resolved per item.
+
+  * 66 items have no "Regular Ice" option (only Less/No/More). "Regular ice"
+    means SEND NO ICE MODIFIER, not select an option. Same for sugar on 31 items.
+
+  * max: 0 on toppings means UNLIMITED, not none.
+
+  * Sugar labels are inconsistent English (Regular Sugar 100% vs Less S 70%) —
+    match on the percentage, not the words.
+
+  * Options carry NO ids (id is null on every one). Both group and option are
+    addressed by exact display name. A rename silently breaks the cart, so
+    re-fetch the menu each run rather than caching option strings.
+
+  * Item names are not unique — 14 names map to 2 items each (cross-listings in
+    a base + promotional category). All 14 checked: identical price and options,
+    so either id is safe, but break the tie deterministically (lowest id) so the
+    same spreadsheet yields the same cart twice running.
+
+  * Menus are genuinely per-store: vs Philadelphia, 114 items shared but 111 of
+    those differ in price. Never reuse a snapshot across locations.
+
+  * Gift cards are sold as menu items — exclude them from drink matching.
+
+================================================================================
+6. RECOMMENDED FLOW FOR TASK 5
+================================================================================
+
+    1. GET  api/v1/apps/get_by_slug/kft                    -> app id
+    2. GET  api/v1/apps/restaurants/{app_id}               -> pick store
+           branch on can_order (live, transient) vs accepting_orders (static);
+           if closed, say "opens at 11:00" rather than failing
+    3. GET  api/v1/restaurants/{store}/menu                -> fresh menu
+    4. POST api/v1/orders {restaurant_id, type=takeout}    -> order_id + token
+           takeout is the safe default and each store's own default_type.
+           Of the 318 customer-visible stores (441 records total, the rest
+           hidden/coming-soon/test): takeout 318, delivery 305, dinein 0,
+           curbside 0.
+    5. POST api/v1/orders/{id}/items  once per drink
+           size = default_price_tier ("Regular"); everything else in options[]
+    6. GET  api/v1/orders/{id}  (and /quote) -> totals to show the group
+    7. Hand over:
+           kft_api.handoff_url(store, order_id)
+           -> https://kft.orderexperience.net/{store}/menu?order_id={order_id}
+         + our own printed manifest of who ordered what
+    8. STOP. Never call checkout or submit.
+
+Steps 4-7 are already implemented in scripts/kft_api.py (create_order, add_item,
+get_order, quote_order, handoff_url). Exercised end to end after the findings
+below were written: build -> read -> handoff_url -> clone_order -> compare.
+
+================================================================================
+7. STATUS, CAVEATS, RISKS
+================================================================================
+
+VERIFIED LIVE this session (previous spike could not POST at all):
+    order creation, add-item with full modifiers, cart read, quote,
+    clone-by-order_id, clone reusability, source integrity, cross-store clone,
+    for/notes persistence, for/notes loss through clone, group-order 403,
+    submit_url redirect behaviour, 6/6 snapshot-driven cart build, and a final
+    round-trip through the scripts/kft_api.py helpers themselves.
+
+NOT EXECUTED — the single open item:
+    The client-side leg. No browser will start on this machine (Chromium and
+    system Chrome both die with "bootstrap_check_in ... Permission denied"
+    from Mach port rendezvous — an endpoint-security policy). The ?order_id=
+    behaviour is therefore read from the shipped JS bundle, quoted in §2, and
+    its server call is verified — but nobody has actually clicked the link.
+    TASK 2 SHOULD DO THIS FIRST. It is the likeliest place this spike is wrong.
+
+    The harness is already written and waiting:
+
+        python3 scripts/verify_handoff.py
+
+    It builds a two-drink cart, opens the handoff URL in a CLEAN browser profile
+    (empty localStorage — i.e. someone else's browser) over the DevTools
+    Protocol, and reports what materialised. Dependency-free: scripts/cdp.py is
+    a ~100-line stdlib-only CDP client (playwright would not install here
+    either), so there is nothing to set up. It only needs a machine where
+    Chrome will actually start.
+
+    PASS looks like: an `orders` localStorage entry appears whose order id
+    DIFFERS from the one we built (proving clone-on-open, not adoption), and
+    whose items and subtotal match the source cart.
+    FAIL looks like: no `orders` entry, or an empty cart — in which case the
+    recommendation in this document does not hold and Task 5 needs rethinking.
+
+RISKS TO TEST WHEN THAT BROWSER CHECK HAPPENS:
+    - A user who ALREADY has an in-progress KFT cart at the same store. The
+      order_id branch in order/create returns before the "adopt existing local
+      cart" branch, so it clones regardless and appends a second `orders` entry
+      for that restaurant. The current session uses the clone (SET_ID is
+      committed directly), but a later reload calls
+      queryObjectFromArray("orders", {restaurantId, isSubmitted:false}) which
+      takes the FIRST match — possibly their stale cart. Worth confirming.
+    - Sold-out or unavailable items at clone time — unknown whether they are
+      dropped silently or error.
+    - Price drift between our quote and their clone if the menu changes in
+      between. Re-quote is cheap; show them the total came from a live read.
+
+OPERATIONAL / ETHICAL NOTES:
+    - Order ids are unguessable-ish 24-hex, but an order is READABLE WITH NO
+      TOKEN — GET api/v1/orders/{id} returns the full cart with a bad token or
+      none at all. Treat the link as a bearer capability: it is not secret, do
+      not post it anywhere public, and keep no access_token beyond one run.
+    - This uses the public ordering API the site itself calls, at human-scale
+      volume, and stops before payment. Bulk-scraping all 441 menus or
+      automating submission is a different conversation and should be checked
+      against Kung Fu Tea's terms first.
+    - Test carts created during this spike are anonymous and unsubmitted; they
+      expire on their own. Nothing was ever submitted and no payment data was
+      touched.
+    - Menu, prices and hours are a point-in-time read (2026-08-17). Because
+      options are addressed by name, re-fetch per run rather than pinning files.
+
+================================================================================
+8. ARTIFACTS
+================================================================================
+
+scripts/kft_api.py
+    Client for the whole flow. Reads: get_app, list_stores, get_menu,
+    find_stores. Cart: create_order, add_item, get_order, quote_order.
+    Handoff: handoff_url(restaurant_id, order_id) builds the link;
+    clone_order(order_id, restaurant_id) performs the same server-side clone
+    the user's browser does, so a handoff can be checked without a browser.
+    All verified live. Stops short of checkout/submit by design — those
+    endpoints are deliberately not wrapped.
+
+scripts/fetch_menu.py
+    Captures one store's menu and normalises each item into its own resolved
+    size / sugar / ice / toppings / milk vocabulary, plus a `canonical` map
+    ({"Large": "Large .9"}) so Task 3 matches per item by construction. Now also
+    records price_tiers / default_price_tier — required by add_item and missing
+    from the first pass, which made the earlier snapshots unable to order.
+        python3 scripts/fetch_menu.py --store 650c9c3cd73592bc0e0bd50a
+        python3 scripts/fetch_menu.py --find "Brooklyn"
+        python3 scripts/fetch_menu.py --list-stores
+
+scripts/verify_handoff.py + scripts/cdp.py
+    The open item from §7. Browser-side proof of the handoff; run when a machine
+    with a working Chrome is available.
+
+data/menu-650c9c3cd73592bc0e0bd50a.json    Bay Ridge — THE TARGET, 154 items
+data/menu-650c9c52d73592bc0e0bd5a7.json    Philadelphia — comparison only, do
+                                           not use for pricing
+    Both regenerated on the current schema.
+
+docs/task1-site-structure.md
+    Longer-form site/API notes behind this recommendation. Corrected in the same
+    pass: the `size` price-tier finding, the for/notes conclusion, and the
+    handoff route (it previously suggested an /order/submit link, which does not
+    carry a cart).
+
+docs/api-endpoints.txt
+    Full endpoint list extracted from the JS bundle, including the
+    checkout/submit endpoints we deliberately do not touch.
