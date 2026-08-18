@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boba Builder — import your group order</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<a class="skip" href="#import">Skip to upload</a>
+
+<header class="masthead">
+  <div class="wrap">
+    <h1><span class="cup" aria-hidden="true"></span> Boba Builder</h1>
+    <p class="tagline">Drop in the spreadsheet everyone filled out. We'll turn it into one
+      Kung Fu Tea cart you can pay for in your own browser.</p>
+    <p class="store" id="store-line" hidden></p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <ol class="steps" aria-label="How this works">
+    <li class="on"><span>1</span> Import the sheet</li>
+    <li><span>2</span> Check the order</li>
+    <li><span>3</span> Open the cart</li>
+  </ol>
+
+  <section class="card" aria-labelledby="format-h">
+    <h2 id="format-h">1. Format the sheet</h2>
+    <p>One row per drink. Only <strong>Name</strong> and <strong>Drink</strong> are required —
+      leave anything else blank and the shop's default is used. Don't fuss over which
+      column things land in: if the toppings end up under Ice, we'll spot it, move it,
+      and tell you what we changed.</p>
+
+    <div class="table-scroll">
+      <table class="cols">
+        <thead>
+          <tr><th>Column</th><th>Required</th><th>Example</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>Name</code></td><td class="req">yes</td><td>Alice</td>
+              <td>Who the drink is for.</td></tr>
+          <tr><td><code>Drink</code></td><td class="req">yes</td><td>Taro Slush</td>
+              <td>Close enough is fine — we match it to the menu.</td></tr>
+          <tr><td><code>Size</code></td><td>no</td><td>Large</td>
+              <td>Medium, Large, or Hot. <em>Hot is a size here, not a separate drink.</em></td></tr>
+          <tr><td><code>Sugar</code></td><td>no</td><td>50%</td>
+              <td>A percentage reads best: 0%, 30%, 50%, 70%, 100%.</td></tr>
+          <tr><td><code>Ice</code></td><td>no</td><td>Less ice</td>
+              <td>No / Less / Regular / More.</td></tr>
+          <tr><td><code>Toppings</code></td><td>no</td><td>Boba, Pudding</td>
+              <td>Separate several with commas.</td></tr>
+          <tr><td><code>Milk</code></td><td>no</td><td>Soy milk</td>
+              <td>Only some drinks offer this.</td></tr>
+          <tr><td><code>Qty</code></td><td>no</td><td>2</td>
+              <td>Or write <code>Taro Slush x2</code> in the drink cell.</td></tr>
+          <tr><td><code>Notes</code></td><td>no</td><td>extra cold</td>
+              <td>Kept with your copy of the order.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="template-row">
+      <a class="btn" href="/template.csv" download>Download the template</a>
+      <details>
+        <summary>Use it as a Google Sheet</summary>
+        <ol class="tight">
+          <li>Download the template above.</li>
+          <li>In Google Sheets: <strong>File → Import → Upload</strong>, pick the file,
+            choose <em>Replace spreadsheet</em>.</li>
+          <li>Share it with your group and let everyone add a row.</li>
+          <li>Then either paste the link below, or
+            <strong>File → Download → CSV</strong> and upload it.</li>
+        </ol>
+        <p class="muted">Pasting a link needs the sheet set to
+          <em>Anyone with the link</em> (Viewer is enough) — otherwise Google won't let us
+          read it. Uploading a file never needs sharing.</p>
+      </details>
+    </div>
+
+    <details class="hints">
+      <summary>What can I type in each cell?</summary>
+      <div id="hints-body" class="hints-body">Loading the menu…</div>
+    </details>
+  </section>
+
+  <section class="card" id="import" aria-labelledby="import-h">
+    <h2 id="import-h">2. Import it</h2>
+
+    <div class="tabs" role="tablist" aria-label="Import method">
+      <button role="tab" id="tab-file" aria-controls="panel-file" aria-selected="true"
+              class="tab on">Upload a file</button>
+      <button role="tab" id="tab-link" aria-controls="panel-link" aria-selected="false"
+              class="tab">Paste a Sheets link</button>
+    </div>
+
+    <div id="panel-file" role="tabpanel" aria-labelledby="tab-file" class="panel">
+      <form id="file-form">
+        <label class="drop" id="drop" tabindex="0">
+          <span class="drop-icon" aria-hidden="true"></span>
+          <span class="drop-main">Drag a file here, or <u>choose one</u></span>
+          <span class="drop-sub">.xlsx or .csv, up to 8&nbsp;MB</span>
+          <input type="file" id="file-input" name="file"
+                 accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        </label>
+        <p class="chosen" id="chosen" hidden></p>
+        <button class="btn primary" id="file-submit" type="submit" disabled>Import orders</button>
+      </form>
+    </div>
+
+    <div id="panel-link" role="tabpanel" aria-labelledby="tab-link" class="panel" hidden>
+      <form id="link-form">
+        <label for="sheet-url">Google Sheets link</label>
+        <input type="url" id="sheet-url" name="sheet_url" inputmode="url"
+               placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0"
+               autocomplete="off" spellcheck="false">
+        <p class="muted">Paste the link from your browser's address bar, or from
+          <strong>Share → Copy link</strong>. We read the tab the link points at.</p>
+        <button class="btn primary" id="link-submit" type="submit">Import orders</button>
+      </form>
+    </div>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+  </section>
+
+  <p class="footnote">Nothing is ordered or paid for here. The last step hands you a normal
+    Kung Fu Tea cart link — you check it and pay in your own browser.</p>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

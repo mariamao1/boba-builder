@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boba Builder — check the order</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <h1><span class="cup" aria-hidden="true"></span> Boba Builder</h1>
+    <p class="tagline" id="source-line">Reading your import…</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <ol class="steps" aria-label="How this works">
+    <li class="done"><span>1</span> Import the sheet</li>
+    <li class="on"><span>2</span> Check the order</li>
+    <li><span>3</span> Open the cart</li>
+  </ol>
+
+  <div id="body" aria-live="polite">
+    <section class="card"><p class="muted">Loading…</p></section>
+  </div>
+
+  <p class="footnote">Nothing is ordered or paid for here.</p>
+</main>
+
+<script src="/static/preview.js"></script>
+</body>
+</html>
