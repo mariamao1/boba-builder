@@ -561,7 +561,10 @@ function render(run, stages) {
   }
 
   /* --- the order ---------------------------------------------------------- */
+  // Ten columns of controls need more room than a column of prose does, so the
+  // review screen breaks out of the reading width.
   const orderCard = card();
+  if (editing) orderCard.className = 'card wide';
   const header = el('div', 'card-head');
   header.append(el('h2', null, editing ? 'Review & edit' : 'The order'));
   const toggle = el('button', 'btn' + (editing ? ' primary' : ''),
@@ -579,7 +582,7 @@ function render(run, stages) {
       + 'the notes below each row stay honest. What your sheet said is kept either way.'));
   }
   const scroll = el('div', 'table-scroll');
-  const table = el('table', 'orders');
+  const table = el('table', editing ? 'orders editing' : 'orders');
   const head = el('thead');
   const headRow = el('tr');
   const columns = ['#', 'Name', 'Drink', 'Size', 'Sugar', 'Ice', 'Toppings', 'Milk', 'Qty'];

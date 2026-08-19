@@ -40,11 +40,11 @@ up automatically. `python3 -m app.pipeline` prints what's wired.
 ## Tests
 
 ```
-python3 -m unittest discover -s tests -t .      # 224 tests
+python3 -m unittest discover -s tests -t .      # 227 tests
 python3 -m app.mapping        # does the vocabulary still match the live menu?
 ```
 
-17 of those drive the preview page's own JavaScript through a small DOM shim, to
+20 of those drive the preview page's own JavaScript through a small DOM shim, to
 catch the wiring bugs Python can't see. They need a JavaScript engine on the
 machine — macOS ships one — and skip themselves when there isn't one.
 

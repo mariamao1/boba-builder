@@ -262,6 +262,19 @@ select.drink-input { min-width: 9rem; flex: 0 1 auto; cursor: pointer; }
 
 /* --- review & edit -------------------------------------------------------- */
 
+/* Ten columns of controls do not fit a 920px reading column. Squeezed past its
+   own text a <select> renders as an arrow and nothing else, which is how the
+   sugar percentage and the ice level came to be invisible. Three things fix it,
+   in order: the review card breaks out of the reading width, every control has
+   a floor it can't be squeezed under, and .table-scroll takes whatever is still
+   over on a narrow screen. */
+.card.wide {
+  width: min(1280px, calc(100vw - 2rem));
+  margin-left: 50%;
+  transform: translateX(-50%);
+  padding-inline: 1rem;
+}
+
 .card-head {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
   flex-wrap: wrap; margin-bottom: .6rem;
@@ -273,10 +286,23 @@ select.drink-input { min-width: 9rem; flex: 0 1 auto; cursor: pointer; }
 .cell-input {
   font: inherit; font-size: .85rem; padding: .25rem .4rem; border-radius: 8px;
   border: 1px solid var(--line); background: var(--card); color: inherit;
-  max-width: 11rem; width: 100%;
+  max-width: 11rem; width: 100%; min-width: 6rem;
 }
-select.cell-input { cursor: pointer; }
+/* A dropdown has to fit its longest real value — "Regular Ice", "Soy Milk",
+   "store default" — plus the arrow, whatever the table would rather give it. */
+select.cell-input { cursor: pointer; min-width: 7.5rem; }
 .cell-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The read-only table divides 100% between its columns, which is right for text
+   and wrong for controls: ten of them share out to about 30px each. Here the
+   table takes the width its contents need instead, and the scroller takes the
+   overflow — so a dropdown is never narrower than the value inside it, however
+   little room the card has. */
+table.editing { width: max-content; min-width: 100%; }
+table.editing th, table.editing td { padding: .4rem .45rem; }
+table.editing .cell-input { width: auto; }
+table.editing td .drink-input { min-width: 7rem; flex: 1 1 7rem; }
+table.editing .suggest-line { gap: .25rem; }
 table.orders td .drink-input { min-width: 8rem; }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: .25rem; margin-bottom: .3rem; }

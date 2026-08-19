@@ -127,6 +127,44 @@ report({
 
 
 class DropdownTests(PreviewScriptTest):
+    def test_every_dropdown_shows_the_value_the_row_actually_has(self):
+        """The whole point of the screen: you can see what is currently chosen.
+
+        Not a layout test — a browser would be needed for that — but it holds
+        the half that is checkable here: the right option is the selected one,
+        so nothing but width can hide it.
+        """
+        seen = self.drive("""
+var out = {};
+['5-size', '5-sugar', '6-ice', '8-sugar', '7-ice'].forEach(function (key) {
+  var select = byFocus(key);
+  out[key] = select.children.filter(function (o) { return o.selected; })
+                            .map(function (o) { return o.textContent; });
+});
+report(out);
+""")
+        self.assertEqual(seen["5-size"], ["Large"])
+        self.assertEqual(seen["5-sugar"], ["50%"])
+        self.assertEqual(seen["6-ice"], ["No Ice"])
+        # Asked for and not on this drink: still selected, still named, and said
+        # so — rather than the dropdown snapping to something nobody chose.
+        self.assertEqual(seen["8-sugar"], ["0% — not on this drink"])
+        self.assertEqual(seen["7-ice"], ["Regular Ice — not on this drink"])
+
+    def test_the_review_table_is_sized_by_its_controls_not_the_column(self):
+        # Ten dropdowns sharing 100% of a reading column come out ~30px wide,
+        # which renders a <select> as an arrow and none of its value.
+        seen = self.drive("""
+var card = null, table = null;
+nodes.body.walk(function (n) {
+  if (!card && String(n.className).indexOf('card wide') === 0) card = n;
+  if (!table && String(n.className).indexOf('orders editing') === 0) table = n;
+});
+report({card: !!card, table: !!table});
+""")
+        self.assertTrue(seen["card"], "the review card should break out of the reading width")
+        self.assertTrue(seen["table"], "the review table should size to its contents")
+
     def test_a_dropdown_saves_its_own_axis_and_keeps_its_place(self):
         seen = self.interact("""
 var select = byFocus('5-size');
@@ -227,6 +265,14 @@ class ReadOnlyViewTests(PreviewScriptTest):
         seen = self.drive("report({drink: !!byFocus('5-drink'), qty: !!byFocus('5-qty-up')});")
         self.assertFalse(seen["drink"])
         self.assertFalse(seen["qty"])
+
+    def test_and_it_stays_in_the_reading_column(self):
+        seen = self.drive("""
+var wide = 0;
+nodes.body.walk(function (n) { if (String(n.className).indexOf('wide') >= 0) wide++; });
+report({wide: wide});
+""")
+        self.assertEqual(seen["wide"], 0)
 
     def test_the_toggle_is_there_and_says_what_it_does(self):
         seen = self.drive("""

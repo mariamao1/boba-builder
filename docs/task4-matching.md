@@ -3,7 +3,7 @@
 Turning the parsed sheet into the store's exact menu items and the exact
 modifier strings those items accept.
 
-    python3 -m unittest discover -s tests -t .   # 224 tests
+    python3 -m unittest discover -s tests -t .   # 227 tests
     python3 -m app.mapping                       # does the vocabulary still fit the menu?
     python3 -m app.matcher .runs/<id>.json       # match a saved import from the CLI
     python3 -m app.server                        # then drop data/sample-group-order.csv on the page
@@ -193,9 +193,19 @@ dropdowns keep their own, so you can click `+` three times without hunting for
 it; the text boxes ask for nothing, because they commit on blur and grabbing the
 caret back would fight the Tab that got you out of them.
 
+**Room for ten columns of controls** is the other thing the screen needs and the
+read-only table doesn't. A table that divides 100% between its columns gives
+each dropdown about 30px, and a `<select>` squeezed past its own text renders as
+an arrow and nothing else — which is how the sugar percentage and the ice level
+came to be invisible. The review table sizes to its contents instead, the card
+breaks out of the 920px reading column, and `.table-scroll` takes whatever is
+still over on a narrow screen.
+
 `tests/test_preview_js.py` drives the real `preview.js` through a DOM shim to
-hold that down — 17 tests over what each control saves and what it focuses. It
-needs a JavaScript engine on the machine and skips when there isn't one.
+hold all of this down — 20 tests over what each control saves, what it focuses,
+and what value it shows. It needs a JavaScript engine on the machine and skips
+when there isn't one. What it can't check is the layout itself: no browser will
+launch here (Task 1 §8), so widths are reasoned about rather than measured.
 
 **The match is derived on every read, never stored.** `GET /api/runs/<id>` runs
 `pipeline.enrich()`, which runs the stages marked *pure* — read-only, no network,
