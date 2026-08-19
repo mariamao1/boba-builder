@@ -3,7 +3,7 @@
 Turning the parsed sheet into the store's exact menu items and the exact
 modifier strings those items accept.
 
-    python3 -m unittest discover -s tests -t .   # 207 tests
+    python3 -m unittest discover -s tests -t .   # 224 tests
     python3 -m app.mapping                       # does the vocabulary still fit the menu?
     python3 -m app.matcher .runs/<id>.json       # match a saved import from the CLI
     python3 -m app.server                        # then drop data/sample-group-order.csv on the page
@@ -182,8 +182,20 @@ Two details that are easy to get wrong and are tested:
 
 Every save redraws the page from the server's answer rather than patching the
 cell, because one change moves the line price, the subtotal, the row's notes and
-sometimes a sheet-level warning. The caret is put back where it was afterwards,
-so typing a name doesn't throw you out of the field.
+sometimes a sheet-level warning.
+
+Which makes **where the focus lands afterwards** a design question, and the
+first answer was wrong: the page remembered the last control you had focused and
+restored it after any save, so clicking `+` handed focus to whichever search box
+you had touched before — and a focused typeahead drops its list open. Focus is
+now asked for per save and never remembered. The `+`/`−` buttons and the
+dropdowns keep their own, so you can click `+` three times without hunting for
+it; the text boxes ask for nothing, because they commit on blur and grabbing the
+caret back would fight the Tab that got you out of them.
+
+`tests/test_preview_js.py` drives the real `preview.js` through a DOM shim to
+hold that down — 17 tests over what each control saves and what it focuses. It
+needs a JavaScript engine on the machine and skips when there isn't one.
 
 **The match is derived on every read, never stored.** `GET /api/runs/<id>` runs
 `pipeline.enrich()`, which runs the stages marked *pure* — read-only, no network,

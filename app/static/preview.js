@@ -3,11 +3,18 @@
 const runId = window.location.pathname.split('/').filter(Boolean).pop();
 const body = document.getElementById('body');
 
-/* Review & edit turns the whole table into controls. Both live outside render()
-   because every save redraws the page from the server's answer — the mode has
-   to survive that, and so does the caret, or editing a name would throw you out
-   of the field on the first keystroke that saves. */
+/* Review & edit turns the whole table into controls. It lives outside render()
+   because every save redraws the page from the server's answer, and the mode
+   has to survive that. */
 let editing = false;
+
+/* So does the focus, for the controls you click repeatedly — pressing + three
+   times should not mean finding the button again each time.
+
+   Asked for per save, never remembered: a control that merely HAD focus once
+   must not get it back on an unrelated redraw. It did, briefly, and clicking +
+   would hand focus to whichever search box you had last touched — which then
+   popped its typeahead list open. */
 let focusKey = null;
 
 const el = (tag, className, text) => {
@@ -17,25 +24,19 @@ const el = (tag, className, text) => {
   return node;
 };
 
-/* Mark a control so the redraw after a save can put the caret back in it. */
-function keepFocus(node, key) {
+/* Name a control, so a save can ask for the focus to land back on it. */
+function mark(node, key) {
   node.setAttribute('data-focus', key);
-  node.addEventListener('focus', () => { focusKey = key; });
   return node;
 }
 
 function restoreFocus() {
-  if (!focusKey || !document.querySelector) return;
-  const node = document.querySelector(`[data-focus="${focusKey}"]`);
-  if (!node) return;
+  const wanted = focusKey;
+  focusKey = null;
+  if (!wanted || !document.querySelector) return;
+  const node = document.querySelector(`[data-focus="${wanted}"]`);
+  if (!node || node.disabled) return;
   node.focus();
-  if (node.value !== undefined && node.setSelectionRange) {
-    try {
-      node.setSelectionRange(node.value.length, node.value.length);
-    } catch (error) {
-      /* selectionRange isn't a thing on every input type; the focus is enough */
-    }
-  }
 }
 
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many || one + 's'}`;
@@ -108,8 +109,9 @@ function optionCell(row, axis, resolved, raw) {
    Redrawing the whole page rather than patching the cell is deliberate: one
    change moves the price, the totals, the row's notes and sometimes a
    sheet-level warning, and the server has already worked all of that out. */
-async function saveRow(rowNumber, changes, feedback) {
+async function saveRow(rowNumber, changes, feedback, focusAfter) {
   if (feedback) feedback.textContent = 'Saving…';
+  focusKey = focusAfter || null;
   try {
     const response = await fetch(`/api/runs/${runId}/rows/${rowNumber}`, {
       method: 'POST',
@@ -192,7 +194,10 @@ function optionFixer(row, axis, problem) {
    names and already in the run, so the browser filters it. */
 function searchBox({ key, value, placeholder, label, list, action, onPick }) {
   const wrap = el('div', 'suggest-line');
-  const input = keepFocus(el('input', 'drink-input'), key);
+  // Named but never re-focused after a save. These commit on blur or Enter, so
+  // by the time one saves the user has moved on — and putting the caret back
+  // would both fight the Tab that got them out and pop the list open again.
+  const input = mark(el('input', 'drink-input'), key);
   const datalist = el('datalist');
   datalist.id = `list-${key}`;
   input.setAttribute('list', datalist.id);
@@ -311,7 +316,8 @@ function selectCell(row, run, axis, current) {
     return cell;
   }
 
-  const select = keepFocus(el('select', 'cell-input'), `${row.row_number}-${axis}`);
+  const key = `${row.row_number}-${axis}`;
+  const select = mark(el('select', 'cell-input'), key);
   select.setAttribute('aria-label', `${axis} for row ${row.row_number}`);
   const blank = document.createElement('option');
   blank.value = '';
@@ -335,8 +341,10 @@ function selectCell(row, run, axis, current) {
     option.selected = true;
     select.append(option);
   }
+  // A dropdown can keep the focus: it is already where the user is looking,
+  // and focusing a select doesn't make it drop open the way a typeahead does.
   select.addEventListener('change', () =>
-    saveRow(row.row_number, { [axis]: select.value }));
+    saveRow(row.row_number, { [axis]: select.value }, null, key));
   cell.append(select);
   return cell;
 }
@@ -384,19 +392,23 @@ function toppingsCell(row, run) {
 function quantityCell(row) {
   const cell = el('td', 'qty');
   const stepper = el('div', 'stepper');
-  const step = (to) => saveRow(row.row_number, { quantity: to });
+  // Each button keeps its own focus, and only its own: clicking + is a
+  // quantity change and nothing else on the row should react to it.
+  const step = (to, key) => saveRow(row.row_number, { quantity: to }, null, key);
 
-  const down = el('button', 'step', '−');
+  const downKey = `${row.row_number}-qty-down`;
+  const down = mark(el('button', 'step', '−'), downKey);
   down.type = 'button';
   down.setAttribute('aria-label', `One fewer on row ${row.row_number}`);
   down.disabled = row.quantity <= 1;
-  down.addEventListener('click', () => step(row.quantity - 1));
+  down.addEventListener('click', () => step(row.quantity - 1, downKey));
 
-  const up = el('button', 'step', '+');
+  const upKey = `${row.row_number}-qty-up`;
+  const up = mark(el('button', 'step', '+'), upKey);
   up.type = 'button';
   up.setAttribute('aria-label', `One more on row ${row.row_number}`);
   up.disabled = row.quantity >= 20;
-  up.addEventListener('click', () => step(row.quantity + 1));
+  up.addEventListener('click', () => step(row.quantity + 1, upKey));
 
   stepper.append(down, el('span', 'count', String(row.quantity)), up);
   cell.append(stepper);
@@ -405,7 +417,7 @@ function quantityCell(row) {
 
 function nameCell(row) {
   const cell = el('td', 'who');
-  const input = keepFocus(el('input', 'cell-input'), `${row.row_number}-person`);
+  const input = mark(el('input', 'cell-input'), `${row.row_number}-person`);
   input.setAttribute('aria-label', `Who row ${row.row_number} is for`);
   input.setAttribute('placeholder', 'nobody');
   input.value = row.person || '';
@@ -557,7 +569,6 @@ function render(run, stages) {
   toggle.type = 'button';
   toggle.addEventListener('click', () => {
     editing = !editing;
-    focusKey = null;
     render(run, stages);
   });
   header.append(toggle);

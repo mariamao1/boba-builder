@@ -3,7 +3,7 @@
 Turning the uploaded sheet into structured order data: one object per row, in
 the words the store actually uses.
 
-    python3 -m unittest discover -s tests -t .     # 137 tests at the time; 207 now
+    python3 -m unittest discover -s tests -t .     # 137 tests at the time; 224 now
     python3 -m app.server                          # then drop data/sample-group-order.csv on the page
 
 ---
@@ -172,7 +172,7 @@ prove both paths give byte-identical structured output.
 
 ## Tests
 
-137, up from 49 (207 once Task 4 landed). The new ones are in `tests/test_options.py`, mostly against a
+137, up from 49 (224 once Task 4 landed). The new ones are in `tests/test_options.py`, mostly against a
 stub vocabulary so they say what they mean and don't move when the snapshot is
 refreshed; `StoreVocabularyTests` and `SampleFileTests` run against the real
 snapshot.
