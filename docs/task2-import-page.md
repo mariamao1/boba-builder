@@ -64,10 +64,15 @@ Routes:
            "notes": "", "extra": {"Venmo": "@alice"}, "issues": [], "ok": true}]}
 ```
 
+> **Since Task 3**, each row also carries a `canonical` block holding those same
+> values resolved to the store's option set (`"LG"` → `"Large"`). The raw fields
+> below are unchanged. See `docs/task3-parsing.md` and the contract in
+> `app/pipeline.py`, which is the version to trust.
+
 To plug in, add a module — nothing in the web layer needs to change:
 
-* Task 3: `app/matcher.py` with `match(run: dict) -> dict`
-* Task 4: `app/cart.py` with `build(matched: dict) -> dict`
+* the match stage: `app/matcher.py` with `match(run: dict) -> dict`
+* the cart stage: `app/cart.py` with `build(matched: dict) -> dict`
 
 `pipeline.status()` notices them and the preview page's stage list turns green.
 Until then `POST /process` returns `202` with which stage is missing, and the
@@ -77,8 +82,9 @@ the command line: `python3 -m app.pipeline .runs/<id>.json`.
 **Values are the user's own words, deliberately.** Task 2 does not resolve
 "Large" to `"Large .7"`. Per Task 1 §5, the size/sugar/ice vocabularies are per
 *item* — Bay Ridge alone has 16 distinct size literals collapsing to 4 labels —
-so "Large" cannot be resolved until the drink is matched. That is Task 3's job,
-and `data/menu-*.json` already carries a per-item `canonical` map for it.
+so "Large" cannot be resolved until the drink is matched. Task 3 took this as far
+as the store-level label (`"LG"` → `"Large"`); the per-item literal still waits
+on the matcher, and `data/menu-*.json` carries the `canonical` map for it.
 
 ## Being forgiving
 

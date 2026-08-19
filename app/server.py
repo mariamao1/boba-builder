@@ -13,6 +13,8 @@ Routes
     GET  /template.csv           the order template, filled with real menu items
     POST /api/import             file upload or {"sheet_url": ...} -> run_id
     GET  /api/runs/<run_id>      the parsed order as JSON
+    GET  /api/drinks?q=          type-ahead search over the store's menu
+    POST /api/runs/<run_id>/rows/<n>  correct one row: {"drink": "..."}
     POST /api/runs/<run_id>/process   push it into the pipeline
     GET  /api/health
 """
@@ -27,9 +29,9 @@ import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from . import importer, pipeline, runs, sheets, template
+from . import importer, options, pipeline, runs, sheets, template
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = importer.MAX_UPLOAD_BYTES + 512 * 1024  # payload plus multipart framing
@@ -130,7 +132,8 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
     def do_GET(self):
-        path = unquote(urlparse(self.path).path)
+        parts = urlparse(self.path)
+        path = unquote(parts.path)
 
         if path == "/":
             return self._serve_static("index.html")
@@ -152,6 +155,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/menu-hints":
             return self._json(template.menu_hints())
+
+        if path == "/api/drinks":
+            # Type-ahead for the "pick a drink" box on the preview page.
+            query = parse_qs(parts.query)
+            text = (query.get("q") or [""])[0]
+            try:
+                limit = max(1, min(20, int((query.get("limit") or ["6"])[0])))
+            except ValueError:
+                limit = 6
+            return self._json({"drinks": options.store_options().search_drinks(text, limit)})
 
         match = re.fullmatch(r"/api/runs/([0-9a-f]+)", path)
         if match:
@@ -178,6 +191,9 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/runs/([0-9a-f]+)/process", path)
             if match:
                 return self._process(match.group(1))
+            match = re.fullmatch(r"/api/runs/([0-9a-f]+)/rows/(\d+)", path)
+            if match:
+                return self._edit_row(match.group(1), int(match.group(2)))
         except ValueError as exc:
             return self._error(str(exc))
         except Exception:  # never take the server down mid-demo
@@ -238,6 +254,30 @@ class Handler(BaseHTTPRequestHandler):
         except importer.UnreadableFile as exc:
             self._error(str(exc))
             return None
+
+    def _edit_row(self, run_id: str, row_number: int):
+        """Correct one row — the "did you mean…?" button on the preview."""
+        if not RUN_ID_RE.fullmatch(run_id):
+            return self._error("bad run id")
+        run = runs.load(run_id)
+        if run is None:
+            return self._error("that import has expired — upload the sheet again",
+                               HTTPStatus.NOT_FOUND)
+        try:
+            changes = json.loads(self._read_body() or b"{}")
+        except json.JSONDecodeError:
+            return self._error("could not read that request")
+        if not isinstance(changes, dict) or "drink" not in changes:
+            return self._error("nothing to change")
+
+        try:
+            updated = importer.apply_row_edit(run, row_number, changes)
+        except importer.RowNotFound:
+            return self._error(f"there is no row {row_number} in this import",
+                               HTTPStatus.NOT_FOUND)
+        runs.save(updated, run_id)
+        updated["run_id"] = run_id
+        return self._json({"ok": True, "run": updated, "stages": pipeline.status()})
 
     def _process(self, run_id: str):
         if not RUN_ID_RE.fullmatch(run_id):

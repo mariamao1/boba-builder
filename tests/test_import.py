@@ -429,6 +429,91 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(run["stats"]["drinks"], 2)
         self.assertEqual(run["rows"][0]["person"], "Alice")
 
+    def test_the_api_hands_over_resolved_options_and_flagged_rows(self):
+        """What the preview page and the cart builder actually read."""
+        messy = ("Name,Drink,Size,Sugar,Ice,Toppings,Milk\n"
+                 "Alice, taro slush ,LG,half sweet,no ice,oreo,\n"
+                 "Bob,Taro Slush,medium,25%,less,,oat milk\n")
+        status, payload = self.post_file("orders.csv", messy.encode())
+        self.assertEqual(status, 200)
+        rows = payload["run"]["rows"]
+
+        self.assertEqual(rows[0]["canonical"], {
+            "drink": "Taro Slush", "size": "Large", "sugar": "50%",
+            "ice": "No Ice", "toppings": ["OREO®"], "milk": "",
+        })
+        self.assertEqual(rows[0]["drink"], "taro slush")  # raw text survives too
+
+        # Bob's two impossible values are reported on the row, and he is kept.
+        self.assertTrue(rows[1]["ok"])
+        messages = " ".join(issue["message"] for issue in rows[1]["issues"])
+        self.assertIn("25%", messages)
+        self.assertIn("oat milk", messages)
+
+    def post_json(self, path, payload):
+        request = urllib.request.Request(
+            self.base + path, data=json.dumps(payload).encode(), method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    def test_correcting_a_drink_from_a_suggestion(self):
+        sheet = ("Name,Drink,Size\n"
+                 "Alice,Taro Slushie,large\n"
+                 "Bob,,medium\n")
+        _status, payload = self.post_file("orders.csv", sheet.encode())
+        run_id = payload["run_id"]
+        alice, bob = payload["run"]["rows"]
+
+        # Unmatched: suggested, not chosen for them. Blank: nothing to suggest.
+        self.assertEqual(alice["canonical"]["drink"], "")
+        self.assertIn("Taro Slush", alice["suggestions"]["drink"])
+        self.assertEqual(bob["suggestions"], {})
+        self.assertFalse(bob["ok"])
+
+        status, out = self.post_json(
+            f"/api/runs/{run_id}/rows/{alice['row_number']}", {"drink": "Taro Slush"})
+        self.assertEqual(status, 200)
+        self.assertEqual(out["run"]["rows"][0]["canonical"]["drink"], "Taro Slush")
+
+        # Filling in the blank row clears the error, and it all persists.
+        status, out = self.post_json(
+            f"/api/runs/{run_id}/rows/{bob['row_number']}", {"drink": "Matcha Milk"})
+        self.assertEqual(status, 200)
+        self.assertEqual(out["run"]["stats"]["errors"], 0)
+
+        _status, body, _headers = self.get(f"/api/runs/{run_id}")
+        saved = json.loads(body)["run"]
+        self.assertEqual([r["canonical"]["drink"] for r in saved["rows"]],
+                         ["Taro Slush", "Matcha Milk"])
+
+    def test_drink_search_returns_a_short_list(self):
+        status, body, _headers = self.get("/api/drinks?q=taro")
+        self.assertEqual(status, 200)
+        drinks = json.loads(body)["drinks"]
+        self.assertIn("Taro Slush", drinks)
+        self.assertLessEqual(len(drinks), 6)
+
+        _status, body, _headers = self.get("/api/drinks?q=tea&limit=3")
+        self.assertEqual(len(json.loads(body)["drinks"]), 3)
+
+        for path in ("/api/drinks", "/api/drinks?q=", "/api/drinks?q=xyzzy",
+                     "/api/drinks?q=tea&limit=notanumber"):
+            _status, body, _headers = self.get(path)
+            self.assertIsInstance(json.loads(body)["drinks"], list, path)
+
+    def test_a_correction_to_a_row_or_run_that_isnt_there(self):
+        _status, payload = self.post_file("orders.csv", TIDY_CSV.encode())
+        run_id = payload["run_id"]
+        self.assertEqual(self.post_json(f"/api/runs/{run_id}/rows/999",
+                                        {"drink": "Taro Slush"})[0], 404)
+        self.assertEqual(self.post_json(f"/api/runs/{run_id}/rows/2", {})[0], 400)
+        self.assertEqual(self.post_json("/api/runs/deadbeef/rows/2",
+                                        {"drink": "Taro Slush"})[0], 404)
+
     def test_bad_upload_reports_the_reason(self):
         status, payload = self.post_file("orders.csv", b"Sugar,Ice\n50%,less\n")
         self.assertEqual(status, 200)  # the import ran; the sheet is the problem

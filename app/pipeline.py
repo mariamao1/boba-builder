@@ -1,12 +1,12 @@
-"""The seam between Task 2 and Tasks 3-4.
+"""The seam between importing and building the cart.
 
-Task 2 stops at a normalised order list. This module is where the next two
-tasks plug in, and it is deliberately the only place the web layer knows about
-them — nothing in server.py imports a matcher or a cart builder directly.
+Importing stops at a structured order list. This module is where the matcher and
+the cart builder plug in, and it is deliberately the only place the web layer
+knows about them — nothing in server.py imports either directly.
 
 THE HANDOFF CONTRACT
 --------------------
-Tasks 3-4 receive one dict, the saved run:
+Both downstream stages receive one dict, the saved run:
 
     {
       "run_id":     "9f2c...",              # hex, also the preview URL
@@ -19,30 +19,51 @@ Tasks 3-4 receive one dict, the saved run:
         {
           "row_number": 2,                  # the row in the user's sheet
           "person":     "Alice",
-          "drink":      "Taro Slush",       # verbatim, not matched to the menu
-          "size":       "Large",            # verbatim: "Large", not "Large .7"
-          "sugar":      "50%",
+          "drink":      "taro slush ",      # verbatim, exactly as it was typed
+          "size":       "LG",
+          "sugar":      "half sweet",
           "ice":        "Less ice",
-          "toppings":   ["Boba"],
+          "toppings":   ["boba"],
           "milk":       "Soy",
           "temperature":"",                 # a "hot or iced" column, if they had one
           "quantity":   1,
           "notes":      "",
           "extra":      {"Venmo": "@alice"},# unmapped columns, kept not dropped
+          "canonical": {                    # the same values, in the store's words
+            "drink":    "Taro Slush",       # "" when no menu item has that name
+            "size":     "Large",            # a label, NOT the literal "Large .7"
+            "sugar":    "50%",              # always a percentage
+            "ice":      "Less Ice",
+            "toppings": ["Boba"],
+            "milk":     ""                  # "" = not offered here, see issues
+          },
           "issues":     [...],
           "ok":         true                # false = do not try to order this row
         }
       ]
     }
 
-Values are the user's own words. Resolving them is Task 3's job and cannot be
-done here: size/sugar/ice vocabularies are per menu item, so "Large" only means
-something once the drink is known (Task 1 recommendation, §5).
+TWO FIELDS PER VALUE, AND WHICH ONE TO USE
+------------------------------------------
+The raw fields are the user's own words. `canonical` is those words resolved
+against the store's option set by app/options.py — that is the one to build a
+cart from.
+
+`canonical` deliberately stops at the store-level label. Option *literals* are
+per item (Task 1 §5): "Large" is "Large .7" on one drink and "Large 1" on
+another, so the last step can only be taken once the drink is matched. Use each
+item's own `canonical` map in data/menu-*.json to get there. Sugar is given as a
+percentage because the store's own names are inconsistent English
+("Regular Sugar 100%" but "Less S 70%") — match on the number.
+
+An empty canonical value means "no choice made, use the store default". It never
+means the row is broken; if we could not resolve something the reason is on
+`row.issues` and the raw text is still there to fall back on.
 
 TO PLUG IN
 ----------
-Task 3: add app/matcher.py with  match(run: dict) -> dict
-Task 4: add app/cart.py    with  build(matched: dict) -> dict
+the match stage: add app/matcher.py with  match(run: dict) -> dict
+the cart stage:  add app/cart.py    with  build(matched: dict) -> dict
 
 Both are picked up automatically by status() and process() below; no change to
 this file or the server is needed.
@@ -54,8 +75,9 @@ import json
 import sys
 
 STAGES = [
-    ("import", "app.importer", None, "Read the sheet and normalise the rows"),
-    ("match", "app.matcher", "match", "Resolve each row against the live menu"),
+    ("import", "app.importer", None,
+     "Read the sheet and resolve each row to the store's options"),
+    ("match", "app.matcher", "match", "Match each row to a live menu item"),
     ("cart", "app.cart", "build", "Build the cart and produce the handoff link"),
 ]
 

@@ -234,6 +234,28 @@ table.orders .who { font-weight: 600; white-space: nowrap; }
 table.orders .qty { text-align: right; width: 3rem; color: var(--muted); }
 table.orders .why { font-size: .82rem; color: var(--muted); }
 table.orders .row-no { color: var(--muted); width: 2.6rem; font-variant-numeric: tabular-nums; }
+/* What we resolved a value to, and what the sheet actually said. */
+table.orders .was { display: block; font-size: .75rem; color: var(--muted); }
+table.orders .unresolved { color: var(--warn); text-decoration: underline dotted; }
+table.orders .default-value { color: var(--muted); }
+
+/* "Did you mean…?" — suggestions and the full-menu picker, on rows whose drink
+   we couldn't find. */
+.fixer { margin-top: .4rem; display: flex; flex-direction: column; gap: .3rem; }
+.suggest-line { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.chip {
+  font: inherit; font-size: .78rem; padding: .18rem .5rem; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card); color: inherit;
+  cursor: pointer; white-space: nowrap;
+}
+.chip:hover, .chip:focus-visible { border-color: var(--accent); color: var(--accent); }
+.chip.apply { border-style: dashed; }
+.drink-input {
+  font: inherit; font-size: .78rem; padding: .18rem .45rem; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--card); color: inherit;
+  min-width: 11rem; flex: 1 1 11rem;
+}
+.drink-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .actions { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; margin-top: 1.2rem; }
 .stage-list { list-style: none; padding: 0; margin: .6rem 0 0; font-size: .9rem; }

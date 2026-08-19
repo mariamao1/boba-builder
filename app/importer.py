@@ -1,9 +1,10 @@
-"""Bytes or a link in, a normalised order list out.
+"""Bytes or a link in, a structured order list out.
 
-This is the whole of Task 2's data path: sniff the format, decode it, find the
-table, hand the rows to schema.parse_table. Everything here is written to keep
+The data path, end to end: sniff the format, decode it, find the table, hand the
+rows to schema.parse_table for structure, then to options.annotate to resolve
+the values against the store's option set. Everything here is written to keep
 going where it can and complain in the result rather than raise — a group order
-with two odd rows should still reach the preview.
+with two odd rows should still reach the preview, with those two rows flagged.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import io
 import json
 from dataclasses import dataclass, field
 
-from . import sheets, xlsx
+from . import options, sheets, xlsx
 from .schema import Issue, OrderRow, is_blank_row, parse_table, score_header_row
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
@@ -116,6 +117,20 @@ def read_csv_rows(text: str) -> tuple[list[list[str]], str]:
     return rows, delimiter
 
 
+def parse_and_resolve(rows: list[list]) -> tuple[list[OrderRow], dict, list[Issue]]:
+    """The two halves of parsing, in order: structure, then vocabulary.
+
+    schema.parse_table finds the table and cleans it up; options.annotate maps
+    what it found onto the store's real option set. Every entry point goes
+    through here so an uploaded file, a Google Sheet and a JSON table all come
+    out identically shaped.
+    """
+    order_rows, column_map, issues = parse_table(rows)
+    if order_rows:
+        issues = issues + options.annotate(order_rows)
+    return order_rows, column_map, issues
+
+
 def _pick_worksheet(worksheets: list[tuple[str, list[list]]]) -> tuple[str, list[list], list[str]]:
     """Choose the tab that most looks like an order list; name the rest."""
     best = None
@@ -174,7 +189,7 @@ def import_bytes(data: bytes, filename: str = "") -> ImportResult:
         if encoding not in ("utf-8", "utf-8-sig"):
             issues.append(Issue("info", f"read as {encoding} text; accents may need a check"))
 
-    order_rows, column_map, table_issues = parse_table(rows)
+    order_rows, column_map, table_issues = parse_and_resolve(rows)
     return ImportResult(rows=order_rows, column_map=column_map,
                         issues=issues + table_issues, source=source)
 
@@ -188,6 +203,60 @@ def import_sheet_link(link: str) -> ImportResult:
                      "encoding": result.source.get("encoding"),
                      "delimiter": result.source.get("delimiter")}
     return result
+
+
+class RowNotFound(KeyError):
+    """That row number isn't in this run."""
+
+
+def apply_row_edit(run: dict, row_number: int, changes: dict) -> dict:
+    """Correct one row of a saved run and re-resolve it.
+
+    This is what "did you mean Winter Melon Tea?" does when the person says yes.
+    Only the fields in `changes` move; everything else about the run is left
+    alone, and the row is put back through the same resolution the import used,
+    so a correction can't produce a row the importer couldn't have.
+
+    Returns the updated run, ready to save.
+    """
+    rows = [OrderRow.from_dict(entry) for entry in run.get("rows") or []]
+    target = next((row for row in rows if row.row_number == row_number), None)
+    if target is None:
+        raise RowNotFound(row_number)
+
+    if "drink" in changes:
+        chosen = str(changes["drink"] or "").strip()
+        previous = target.drink
+        if not chosen:
+            raise ValueError("pick a drink")
+        target.drink = chosen
+        # Drop what this correction invalidates: everything the resolver will
+        # say again, the "no drink" error, and any earlier correction note.
+        target.issues = [
+            issue for issue in target.issues
+            if not (issue.code or "").startswith("option:")
+            and (issue.code or "") != "edited:drink"
+            and not (issue.level == "error" and issue.field == "drink")
+        ]
+        target.issues.append(Issue(
+            "info",
+            f"drink set to \"{chosen}\""
+            + (f" — the sheet said \"{previous}\"" if previous else " — this row was blank"),
+            "drink", row_number, "edited:drink"))
+
+    options.resolve_row(target)
+
+    # The sheet-level tally has to be recomputed, not patched: fixing one row
+    # can take the count to zero and the note has to disappear with it.
+    issues = [Issue.from_dict(entry) for entry in run.get("issues") or []
+              if entry.get("code") not in options.SUMMARY_CODES]
+    issues += options.summarise(rows)
+
+    result = ImportResult(rows=rows, column_map=run.get("column_map") or {},
+                          issues=issues, source=run.get("source") or {})
+    updated = dict(run)
+    updated.update(result.as_dict())
+    return updated
 
 
 def import_json(payload: str) -> ImportResult:
@@ -204,6 +273,6 @@ def import_json(payload: str) -> ImportResult:
         rows = [headers] + [[row.get(header, "") for header in headers] for row in data]
     else:
         rows = [list(row) for row in data]
-    order_rows, column_map, issues = parse_table(rows)
+    order_rows, column_map, issues = parse_and_resolve(rows)
     return ImportResult(rows=order_rows, column_map=column_map, issues=issues,
                         source={"kind": "json", "format": "json"})

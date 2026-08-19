@@ -130,6 +130,11 @@ class Issue:
         return {"level": self.level, "message": self.message, "field": self.field,
                 "row": self.row, "code": self.code}
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "Issue":
+        return cls(data.get("level", "info"), data.get("message", ""),
+                   data.get("field"), data.get("row"), data.get("code"))
+
 
 @dataclass
 class OrderRow:
@@ -146,6 +151,13 @@ class OrderRow:
     notes: str = ""
     extra: dict = field(default_factory=dict)
     issues: list[Issue] = field(default_factory=list)
+    # The same values resolved to the store's option set — filled by
+    # app.options, empty until then. Never a substitute for the raw fields
+    # above: a blank here means "use the store default", not "nothing was said".
+    canonical: dict = field(default_factory=dict)
+    # {field: [menu names]} — what we'd offer instead of a value we couldn't
+    # place. Offered, never applied on our own; the person picks.
+    suggestions: dict = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -165,10 +177,28 @@ class OrderRow:
             "quantity": self.quantity,
             "notes": self.notes,
             "extra": dict(self.extra),
+            "canonical": dict(self.canonical),
+            "suggestions": {key: list(value) for key, value in self.suggestions.items()},
             "issues": [issue.as_dict() for issue in self.issues],
             "ok": self.ok,
         }
         return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "OrderRow":
+        """Rebuild a row from a saved run, so a correction can re-resolve it."""
+        row = cls(row_number=int(data.get("row_number") or 0))
+        for name in ("person", "drink", "size", "sugar", "ice", "milk",
+                     "temperature", "notes"):
+            setattr(row, name, data.get(name) or "")
+        row.toppings = list(data.get("toppings") or [])
+        row.quantity = int(data.get("quantity") or 1)
+        row.extra = dict(data.get("extra") or {})
+        row.canonical = dict(data.get("canonical") or {})
+        row.suggestions = {key: list(value)
+                           for key, value in (data.get("suggestions") or {}).items()}
+        row.issues = [Issue.from_dict(issue) for issue in data.get("issues") or []]
+        return row
 
 
 # --- header detection -------------------------------------------------------
