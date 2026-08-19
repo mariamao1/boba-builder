@@ -28,6 +28,13 @@ percentage — `50%` — and let the matcher find the option carrying it.
 The raw text is never overwritten. `row.size` stays as the user typed it and the
 resolved value lands in `row.canonical`, so a wrong guess here is always
 recoverable downstream and visible in the preview.
+
+WHERE THE WORDS COME FROM
+-------------------------
+The synonym tables are `data/mapping.json`, loaded by `app/mapping.py` — not
+constants in this file. Adding "boba pearls" to the topping list is an edit to
+that file, and `python3 -m app.mapping` says whether every value in it still
+names something this store sells. See Task 4.
 """
 
 from __future__ import annotations
@@ -36,7 +43,8 @@ import difflib
 import functools
 import re
 
-from . import template
+from . import mapping, template
+from .menu import norm, squash  # the comparison keys, shared with the matcher
 from .schema import Issue, OrderRow
 
 # Statuses a single value can come back with. Only "ok" is silent.
@@ -51,15 +59,17 @@ AMBIGUOUS = "ambiguous"      # matches several real options
 class Resolved:
     """One value's outcome. Falsy when there is nothing usable."""
 
-    __slots__ = ("value", "status", "message", "suggestions")
+    __slots__ = ("value", "status", "message", "suggestions", "quantity")
 
     def __init__(self, value: str = "", status: str = BLANK, message: str = "",
-                 suggestions: list[str] | None = None):
+                 suggestions: list[str] | None = None, quantity: int = 1):
         self.value = value
         self.status = status
         self.message = message
         # Real menu names to offer instead. Never applied automatically.
         self.suggestions = suggestions or []
+        # Toppings only: "2x pudding" is two puddings, not one (Task 1 §6).
+        self.quantity = quantity
 
     def __bool__(self) -> bool:
         return bool(self.value)
@@ -68,119 +78,25 @@ class Resolved:
         return f"Resolved({self.value!r}, {self.status!r})"
 
 
-def norm(text) -> str:
-    """Comparison key: lowercase, punctuation to spaces, percent kept.
-
-    Percent survives because it is the whole meaning of a sugar level, and the
-    ® in OREO® has to go for "oreo" to match.
-    """
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9%]+", " ", str(text or "").lower())).strip()
-
-
-# --- synonym tables ---------------------------------------------------------
+# --- the vocabulary ---------------------------------------------------------
 #
-# Keyed on norm() output. These are the words people actually put in a boba
-# spreadsheet, not a thesaurus.
+# The synonym tables live in data/mapping.json, keyed on norm() output. They are
+# the words people actually put in a boba spreadsheet, not a thesaurus, and they
+# are a file rather than code so that a menu change is an edit and not a patch.
+#
+#   size.words            "lg" -> "Large"
+#   size.nearest          sizes this store lacks, and the nearest it has
+#   size.means_default    words that mean "no size modifier" ("iced")
+#   size.temperature      a Hot/Iced column -> the size axis (Task 1 §5)
+#   sugar.words           "half sweet" -> 50; canonicalised to a percentage
+#   ice.words             "easy on the" -> "less"
+#   milk.words / .not_sold / .means_default
+#   toppings.words        "oreo" -> "OREO®"
+#   toppings.ambiguous    families too vague to guess between ("popping boba")
 
-SIZE_WORDS = {
-    "m": "Medium", "med": "Medium", "md": "Medium", "medium": "Medium",
-    "regular": "Medium", "reg": "Medium", "standard": "Medium", "normal": "Medium",
-    "l": "Large", "lg": "Large", "large": "Large", "big": "Large",
-    "biggest": "Large", "largest": "Large",
-    "hot": "Hot", "h": "Hot", "warm": "Hot",
-    "cold": "Cold",
-}
-
-# "Iced" is not a size, wherever it is written. Iced is what these drinks
-# already are — only 4 of 154 items even have a Cold option — so the correct
-# order sends no size modifier. Recognised so it doesn't raise a flag.
-SIZE_DEFAULT = {"iced", "ice", "cold drink", "as normal", "whatever", "any"}
-
-# Sizes the store doesn't have, mapped to the nearest thing it does, because
-# "small" is a real request and "we don't do small" is not a useful answer.
-SIZE_NEAREST = {
-    "s": ("Medium", "this store's smallest is Medium"),
-    "small": ("Medium", "this store's smallest is Medium"),
-    "sm": ("Medium", "this store's smallest is Medium"),
-    "xl": ("Large", "this store's biggest is Large"),
-    "extra large": ("Large", "this store's biggest is Large"),
-    "xtra large": ("Large", "this store's biggest is Large"),
-    "venti": ("Large", "this store's biggest is Large"),
-    "grande": ("Medium", "read as Medium"),
-}
-
-SUGAR_WORDS = {
-    "no": 0, "none": 0, "zero": 0, "unsweetened": 0, "unsweet": 0, "sugar free": 0,
-    "no sugar": 0, "without": 0, "plain": 0,
-    "little": 30, "light": 30, "lightly sweet": 30, "slightly sweet": 30, "lite": 30,
-    "quarter": 30,
-    "half": 50, "half sweet": 50, "medium": 50, "mid": 50,
-    "less": 70, "less sweet": 70, "lower": 70, "reduced": 70, "a bit less": 70,
-    "regular": 100, "normal": 100, "standard": 100, "full": 100, "default": 100,
-    "full sweet": 100, "sweet": 100, "yes": 100,
-    "extra": 120, "extra sweet": 120, "more": 120, "very sweet": 120, "max": 120,
-}
-
-ICE_WORDS = {
-    "no": "no", "none": "no", "zero": "no", "0": "no", "without": "no",
-    "iceless": "no", "hold the": "no", "skip": "no",
-    "less": "less", "light": "less", "little": "less", "half": "less",
-    "lite": "less", "easy": "less", "easy on the": "less",
-    "regular": "regular", "normal": "regular", "standard": "regular",
-    "full": "regular", "yes": "regular", "default": "regular", "some": "regular",
-    "more": "more", "extra": "more", "lots": "more", "lots of": "more",
-    "heavy": "more", "double": "more", "max": "more",
-}
-
-# Only Soy Milk exists at Bay Ridge, but people ask for the others by name and
-# deserve to be told which one they'll actually get.
-MILK_WORDS = {
-    "soy": "Soy Milk", "soy milk": "Soy Milk", "soya": "Soy Milk",
-}
-# "none", "regular", "whole milk" in a Milk column all mean the same thing: don't
-# substitute anything. That is the absence of a modifier, not a request the store
-# can't meet, so it must not raise a flag.
-MILK_DEFAULT = {"none", "no", "n a", "na", "regular", "regular milk", "normal",
-                "standard", "default", "milk", "whole", "whole milk", "dairy",
-                "cow", "cows milk", "skim", "skim milk", "2%", "2% milk", "plain"}
-# Genuine alternatives this store does not carry.
-MILK_NOT_SOLD = ("oat", "almond", "cashew", "coconut milk", "rice milk", "lactose",
-                 "lactaid", "macadamia", "pea milk", "half and half", "dairy free",
-                 "non dairy", "nondairy")
-
-TOPPING_WORDS = {
-    "pearl": "Boba", "pearls": "Boba", "tapioca": "Boba", "tapioca pearls": "Boba",
-    "black pearls": "Boba", "bubbles": "Boba", "black boba": "Boba", "bubble": "Boba",
-    "tapioca boba": "Boba",
-    "oreo": "OREO®", "oreos": "OREO®", "cookies": "OREO®", "cookie": "OREO®",
-    "aloe": "Aloe Jelly", "aloe vera": "Aloe Jelly",
-    "grass jelly": "Herbal Jelly",
-    "cheese foam": "Milk Cap", "cheese cap": "Milk Cap", "milk foam": "Milk Cap",
-    "salted cheese": "Milk Cap", "cream cap": "Milk Cap", "foam": "Milk Cap",
-    "red beans": "Red Bean", "redbean": "Red Bean", "azuki": "Red Bean",
-    "chia": "Chia Seeds", "chia seed": "Chia Seeds",
-    "espresso": "Espresso Shot", "coffee shot": "Espresso Shot",
-    "extra shot": "Espresso Shot", "shot of espresso": "Espresso Shot",
-    "crystal": "Crystal Boba", "white pearls": "Crystal Boba",
-    "white boba": "Crystal Boba", "agar boba": "Crystal Boba",
-    "protein": "Protein Add On", "protein powder": "Protein Add On",
-    "brown sugar": "Brown Sugar Wow Boba", "wow boba": "Brown Sugar Wow Boba",
-    "flan": "Pudding", "egg pudding": "Pudding", "custard": "Pudding",
-}
-
-# Real requests that name a family rather than a product. Guessing between them
-# would put something the group didn't ask for in the cart.
-TOPPING_AMBIGUOUS = {
-    "popping boba": ("Strawberry Popping Boba", "Coffee Popping Boba",
-                     "Mango Popping Boba"),
-    "popping": ("Strawberry Popping Boba", "Coffee Popping Boba",
-                "Mango Popping Boba"),
-    "jelly": ("Mango Jelly", "Aloe Jelly", "Herbal Jelly", "Nata Jelly"),
-    "milk cap": ("Milk Cap", "Strawberry Milk Cap", "Matcha Milk Cap"),
-}
-
-# "2x boba", "x2 boba", "double pudding" — the topping is what we need; the count
-# belongs to the cart writer (options carry their own quantity field, Task 1 §6).
+# "2x boba", "x2 boba", "double pudding" — the topping is what we need for the
+# match; the count rides along on the Resolved and is spent by the cart writer,
+# because options carry their own quantity field (Task 1 §6).
 # Stripping is always tried *alongside* the untouched text, never instead of it,
 # so "extra shot" can still reach the synonym table as itself.
 _TOPPING_QTY = re.compile(
@@ -188,11 +104,34 @@ _TOPPING_QTY = re.compile(
     r"|[\s(]*[x×*]\s*\d{1,2}\s*\)?\s*$",
     re.IGNORECASE)
 
+# Only a written number or an unmistakable word counts. "extra boba" is left at
+# one: "extra" is also half of "extra shot", and reading it as a count would
+# quietly charge somebody for a topping they didn't ask twice for.
+_COUNT_WORDS = {"double": 2, "triple": 3}
+
+
+def topping_count(text: str) -> int:
+    """How many of a topping "2x pudding" asks for. 1 unless it plainly says."""
+    found = _TOPPING_QTY.search(text or "")
+    if not found:
+        return 1
+    marker = found.group(0).strip().lower()
+    word = _COUNT_WORDS.get(marker)
+    if word:
+        return word
+    digits = re.search(r"\d{1,2}", marker)
+    if not digits:
+        return 1
+    count = int(digits.group(0))
+    return count if 1 <= count <= 20 else 1
+
 
 class StoreOptions:
     """One store's option vocabulary, built from the Task 1 menu snapshot."""
 
-    def __init__(self, hints: dict):
+    def __init__(self, hints: dict, config: mapping.Mapping | None = None):
+        # The vocabulary is configuration; the option lists are the store's.
+        self.config = config or mapping.load()
         self.store = hints.get("store")
         self.restaurant_id = hints.get("restaurant_id")
 
@@ -218,8 +157,12 @@ class StoreOptions:
         self._milk_by_key = {norm(name): name for name in self.milk}
         self._topping_by_key = {norm(name): name for name in self.toppings}
         self._drink_by_key: dict[str, str] = {}
+        self._drink_by_squash: dict[str, set[str]] = {}
         for name in self.drinks:
             self._drink_by_key.setdefault(norm(name), name)
+            self._drink_by_squash.setdefault(squash(name), set()).add(name)
+        self._drink_aliases = {norm(key): value
+                               for key, value in self.config.drink_aliases.items()}
 
         # "No Mango Jelly" is a removal option. It is orderable, so it stays in
         # the vocabulary, but it must never win a fuzzy match against
@@ -248,30 +191,30 @@ class StoreOptions:
         key = norm(text)
         if not key and temperature:
             # "Hot" is a size at Kung Fu Tea, not a temperature (Task 1 §5), so a
-            # Hot/Iced column feeds the size axis.
+            # Hot/Iced column feeds the size axis. An empty mapping value means
+            # "iced" — the default on an iced drink, so the right order sends no
+            # size modifier at all; only 4 of 154 items have a Cold option.
             temp = norm(temperature)
-            if temp in ("hot", "warm"):
-                return Resolved("Hot", ASSUMED, "read 'hot' as the Hot size")
-            if temp in ("iced", "ice", "cold"):
-                # Iced is the default on iced drinks; only 4 items have a Cold
-                # option at all. Sending nothing is the correct iced order.
-                return Resolved("", BLANK)
+            if temp in self.config.size_temperature:
+                value = self.config.size_temperature[temp]
+                if value and value in self.sizes:
+                    return Resolved(value, ASSUMED, f"read '{temp}' as the {value} size")
             return Resolved("", BLANK)
         if not key:
             return Resolved("", BLANK)
 
         if key in self._size_by_key:
             return Resolved(self._size_by_key[key], OK)
-        if key in SIZE_DEFAULT:
+        if key in self.config.size_default:
             return Resolved("", BLANK)
-        if key in SIZE_WORDS and SIZE_WORDS[key] in self.sizes:
-            return Resolved(SIZE_WORDS[key], OK)
-        if key in SIZE_NEAREST:
-            value, why = SIZE_NEAREST[key]
+        if key in self.config.size_words and self.config.size_words[key] in self.sizes:
+            return Resolved(self.config.size_words[key], OK)
+        if key in self.config.size_nearest:
+            value, why = self.config.size_nearest[key]
             if value in self.sizes:
                 return Resolved(value, ASSUMED, why)
         # "large cup", "size: large"
-        for word, value in SIZE_WORDS.items():
+        for word, value in self.config.size_words.items():
             if len(word) > 1 and re.search(rf"\b{re.escape(word)}\b", key) and value in self.sizes:
                 return Resolved(value, OK)
         return Resolved("", UNKNOWN,
@@ -283,8 +226,7 @@ class StoreOptions:
         if not key:
             return Resolved("", BLANK)
         # Drop the noise words so "50% sugar" and "half sweetness" both reduce.
-        stripped = re.sub(r"\b(sugar|sweetness|sweetened|sweet|level|s)\b", " ", key)
-        stripped = re.sub(r"\s+", " ", stripped).strip()
+        stripped = _drop_words(key, self.config.sugar_noise)
 
         found = re.search(r"(\d+)\s*%?", stripped)
         if found:
@@ -296,11 +238,11 @@ class StoreOptions:
                             f"{_join([f'{n}%' for n in self.sugar_levels])}, not {level}%")
 
         for candidate in (stripped, key):
-            if candidate in SUGAR_WORDS:
-                level = SUGAR_WORDS[candidate]
+            if candidate in self.config.sugar_words:
+                level = self.config.sugar_words[candidate]
                 if level in self.sugar_levels:
                     return Resolved(self.sugar_label(level), OK)
-        for word, level in SUGAR_WORDS.items():
+        for word, level in self.config.sugar_words.items():
             if re.search(rf"\b{re.escape(word)}\b", stripped) and level in self.sugar_levels:
                 return Resolved(self.sugar_label(level), OK)
         return Resolved("", UNKNOWN,
@@ -314,18 +256,17 @@ class StoreOptions:
         if key in self._ice_by_key:
             return Resolved(self._ice_by_key[key], OK)
 
-        stripped = re.sub(r"\b(ice|iced|cubes)\b", " ", key)
-        stripped = re.sub(r"\s+", " ", stripped).strip()
+        stripped = _drop_words(key, self.config.ice_noise)
         if not stripped:
             # The cell said only "ice" — that is the store default, not a level.
             return Resolved("", BLANK)
 
         for candidate in (stripped, key):
-            if candidate in ICE_WORDS:
-                name = self._ice_for(ICE_WORDS[candidate])
+            if candidate in self.config.ice_words:
+                name = self._ice_for(self.config.ice_words[candidate])
                 if name:
                     return Resolved(name, OK)
-        for word, level in ICE_WORDS.items():
+        for word, level in self.config.ice_words.items():
             if re.search(rf"\b{re.escape(word)}\b", stripped):
                 name = self._ice_for(level)
                 if name:
@@ -339,14 +280,14 @@ class StoreOptions:
             return Resolved("", BLANK)
         if key in self._milk_by_key:
             return Resolved(self._milk_by_key[key], OK)
-        if key in MILK_WORDS and MILK_WORDS[key] in self.milk:
-            return Resolved(MILK_WORDS[key], OK)
-        if key in MILK_DEFAULT:
+        if key in self.config.milk_words and self.config.milk_words[key] in self.milk:
+            return Resolved(self.config.milk_words[key], OK)
+        if key in self.config.milk_default:
             return Resolved("", BLANK)
-        for word, value in MILK_WORDS.items():
+        for word, value in self.config.milk_words.items():
             if re.search(rf"\b{re.escape(word)}\b", key) and value in self.milk:
                 return Resolved(value, OK)
-        for word in MILK_NOT_SOLD:
+        for word in self.config.milk_not_sold:
             if word in key:
                 offer = _join(self.milk) if self.milk else "no milk alternatives"
                 return Resolved("", UNAVAILABLE,
@@ -354,6 +295,13 @@ class StoreOptions:
         return Resolved("", UNKNOWN, f"\"{text}\" isn't a milk option we recognise")
 
     def topping(self, text: str) -> Resolved:
+        """One topping, plus how many of it "2x pudding" asked for."""
+        resolved = self._topping(text)
+        if resolved.value:
+            resolved.quantity = topping_count(text)
+        return resolved
+
+    def _topping(self, text: str) -> Resolved:
         raw = text.strip()
         # Two candidates: the text as typed, and the text with any count removed.
         # Trying both means "extra shot" still finds Espresso Shot while
@@ -370,25 +318,28 @@ class StoreOptions:
             if key in self._topping_by_key:
                 return Resolved(self._topping_by_key[key], OK)
         for key in keys:
-            if key in TOPPING_AMBIGUOUS:
-                choices = [name for name in TOPPING_AMBIGUOUS[key] if name in self.toppings]
+            if key in self.config.topping_ambiguous:
+                choices = [name for name in self.config.topping_ambiguous[key]
+                           if name in self.toppings]
                 if len(choices) > 1:
                     return Resolved("", AMBIGUOUS,
                                     f"\"{raw}\" could be {_join(choices, 'or')} — say which")
                 if len(choices) == 1:
                     return Resolved(choices[0], OK)
         for key in keys:
-            if key in TOPPING_WORDS and TOPPING_WORDS[key] in self.toppings:
-                return Resolved(TOPPING_WORDS[key], OK)
+            if key in self.config.topping_words \
+                    and self.config.topping_words[key] in self.toppings:
+                return Resolved(self.config.topping_words[key], OK)
         for key in keys:
-            for word, value in TOPPING_WORDS.items():
+            for word, value in self.config.topping_words.items():
                 if len(word) >= 4 and re.search(rf"\b{re.escape(word)}\b", key) \
                         and value in self.toppings:
                     return Resolved(value, OK)
 
         fuzzy = {norm(name): name for name in self._fuzzy_toppings}
         for key in keys:
-            close = difflib.get_close_matches(key, list(fuzzy), n=1, cutoff=0.85)
+            close = difflib.get_close_matches(key, list(fuzzy), n=1,
+                                              cutoff=self.config.topping_cutoff)
             if close:
                 name = fuzzy[close[0]]
                 return Resolved(name, ASSUMED, f"read \"{raw}\" as {name}")
@@ -416,7 +367,7 @@ class StoreOptions:
                 # Capped below 1.0 so a real typo match always outranks a
                 # merely-overlapping name.
                 score = max(score, 0.9 * len(shared) / len(wanted))
-            if score >= 0.5:
+            if score >= self.config.drink_cutoff:
                 scored.append((score, name))
 
         # Name as the tiebreak, so the same sheet suggests the same things twice
@@ -459,11 +410,17 @@ class StoreOptions:
         return [name for _score, name in scored[:limit]]
 
     def drink(self, text: str) -> Resolved:
-        """A light sanity check only — real menu matching is the matcher's job.
+        """The drink name, if it is a name this store uses. No guessing.
 
-        Exact (case- and spacing-insensitive) hits resolve. Anything else comes
-        back unresolved but with suggestions attached, because picking the wrong
-        drink is the one mistake here that costs money — so the person decides.
+        Three ways of being the same name, all safe to apply: exactly as
+        written, the same name spelled differently ("Wintermelon" for "Winter
+        Melon"), or an alias from data/mapping.json. Anything looser comes back
+        unresolved with suggestions attached — picking the wrong *drink* is the
+        one mistake here that costs a whole drink, so the person decides.
+
+        `app/matcher.py` finds the same names by the same three tiers; it goes
+        on to pick the menu item, which needs the menu itself and not just a
+        list of names.
         """
         key = norm(text)
         if not key:
@@ -473,6 +430,21 @@ class StoreOptions:
         if key in self._drink_by_key:
             return Resolved(self._drink_by_key[key], OK)
 
+        alias = self._drink_aliases.get(key)
+        if alias and norm(alias) in self._drink_by_key:
+            name = self._drink_by_key[norm(alias)]
+            return Resolved(name, ASSUMED, f"read \"{text.strip()}\" as {name}")
+
+        same = self._drink_by_squash.get(squash(text)) or set()
+        if len(same) == 1:
+            name = next(iter(same))
+            return Resolved(name, ASSUMED, f"read \"{text.strip()}\" as {name}")
+        if len(same) > 1:
+            choices = sorted(same)
+            return Resolved("", AMBIGUOUS,
+                            f"\"{text.strip()}\" could be {_join(choices, 'or')} — say which",
+                            choices)
+
         suggestions = self.drink_suggestions(text)
         missing = f"no drink called \"{text.strip()}\" on this store's menu"
         if suggestions:
@@ -480,6 +452,14 @@ class StoreOptions:
                             f"{missing} — did you mean {_join(suggestions[:2], 'or')}?",
                             suggestions)
         return Resolved("", UNKNOWN, missing)
+
+
+def _drop_words(key: str, words) -> str:
+    """Remove whole noise words from a comparison key: "50% sugar" -> "50%"."""
+    if not words:
+        return key
+    pattern = "|".join(re.escape(word) for word in words)
+    return re.sub(r"\s+", " ", re.sub(rf"\b(?:{pattern})\b", " ", key)).strip()
 
 
 def _join(names, conjunction: str = "and") -> str:
@@ -539,13 +519,19 @@ def resolve_row(row: OrderRow, options: StoreOptions | None = None) -> dict:
     canonical["milk"] = milk.value
 
     toppings: list[str] = []
+    counts: dict = {}
     for text in row.toppings:
         resolved = options.topping(text)
         flag(resolved, "toppings")
         # Duplicates would order the same topping twice.
         if resolved.value and resolved.value not in toppings:
             toppings.append(resolved.value)
+            if resolved.quantity > 1:
+                counts[resolved.value] = resolved.quantity
     canonical["toppings"] = toppings
+    # Only the ones somebody asked twice for; absent means one of each.
+    if counts:
+        canonical["topping_quantities"] = counts
 
     drink = options.drink(row.drink)
     flag(drink, "drink")

@@ -407,7 +407,7 @@ class RowEditTests(unittest.TestCase):
         notes = [i["message"] for i in self.find(updated, "Sam")["issues"]
                  if i["code"] == "edited:drink"]
         self.assertEqual(len(notes), 1)
-        self.assertIn("Wintermelon Lemonade", notes[0])
+        self.assertIn("Wintermelon Lemonaid", notes[0])
 
     def test_filling_in_a_blank_row_makes_it_orderable(self):
         blank = self.find(self.run, "Jo")
@@ -485,6 +485,8 @@ class ResolveRowTests(unittest.TestCase):
         self.assertEqual(canonical, {
             "drink": "Taro Slush", "size": "Large", "sugar": "50%", "ice": "No Ice",
             "toppings": ["OREO®", "Pudding"], "milk": "Soy Milk",
+            # "2x pudding" is two puddings. Only counts above one are recorded.
+            "topping_quantities": {"Pudding": 2},
         })
         # The raw fields are untouched, so a wrong guess stays recoverable.
         self.assertEqual(order.size, "LG")
@@ -590,7 +592,7 @@ class SampleFileTests(unittest.TestCase):
         self.assertIn("25%", messages)          # sugar level the store lacks
         self.assertIn("oat milk", messages)     # milk the store lacks
         self.assertIn("could be", messages)     # ambiguous popping boba
-        self.assertIn("Wintermelon Lemonade", messages)
+        self.assertIn("Wintermelon Lemonaid", messages)
         self.assertTrue(sam.ok)  # none of that stops the drink being ordered
 
     def test_unnamed_row_is_a_warning_not_a_failure(self):
@@ -610,7 +612,9 @@ class SampleFileTests(unittest.TestCase):
         payload = self.result.as_dict()
         for entry in payload["rows"]:
             self.assertIn("canonical", entry)
-            self.assertEqual(set(entry["canonical"]),
+            # topping_quantities is the one optional key: present only when
+            # somebody asked for two of something.
+            self.assertEqual(set(entry["canonical"]) - {"topping_quantities"},
                              {"drink", "size", "sugar", "ice", "toppings", "milk"})
 
 

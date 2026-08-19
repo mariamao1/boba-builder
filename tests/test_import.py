@@ -537,11 +537,12 @@ class ServerTests(unittest.TestCase):
                 code, data = response.status, json.loads(response.read())
         except urllib.error.HTTPError as exc:
             code, data = exc.code, json.loads(exc.read())
-        # Tasks 3-4 are not built yet, so this is a clean "pending", not an error.
+        # The cart stage isn't built yet, so this is a clean "pending", not an
+        # error — and the match that did run comes back with it.
         self.assertIn(code, (200, 202))
         if code == 202:
             self.assertTrue(data["pending"])
-            self.assertEqual(data["stage"]["name"], "match")
+            self.assertEqual(data["stage"]["name"], "cart")
 
     def test_unknown_run(self):
         with self.assertRaises(urllib.error.HTTPError) as caught:

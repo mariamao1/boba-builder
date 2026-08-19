@@ -209,13 +209,39 @@ class RowNotFound(KeyError):
     """That row number isn't in this run."""
 
 
+#: What the preview is allowed to correct on a row. Everything else about an
+#: import stays as the sheet had it — this is for fixing what we couldn't place,
+#: not for editing somebody's order on their behalf.
+EDITABLE_FIELDS = frozenset({"drink", "size", "sugar", "ice", "milk", "toppings"})
+
+_FIELD_LABELS = {"drink": "drink", "size": "size", "sugar": "sugar level",
+                 "ice": "ice level", "milk": "milk", "toppings": "toppings"}
+
+
+def _clean(field: str, value):
+    """A change from the page -> the same shape the parser would have produced."""
+    if field == "toppings":
+        if isinstance(value, str):
+            value = [value] if value.strip() else []
+        return [str(entry).strip() for entry in value or [] if str(entry).strip()]
+    return str(value or "").strip()
+
+
+def _describe(value) -> str:
+    return ", ".join(value) if isinstance(value, list) else str(value)
+
+
 def apply_row_edit(run: dict, row_number: int, changes: dict) -> dict:
     """Correct one row of a saved run and re-resolve it.
 
-    This is what "did you mean Winter Melon Tea?" does when the person says yes.
-    Only the fields in `changes` move; everything else about the run is left
-    alone, and the row is put back through the same resolution the import used,
-    so a correction can't produce a row the importer couldn't have.
+    This is what "did you mean Winter Melon Tea?" does when the person says yes,
+    and what the fix-it buttons on an option this drink can't have do. Only the
+    fields in `changes` move; everything else about the run is left alone, and
+    the row is put back through the same resolution the import used, so a
+    correction can't produce a row the importer couldn't have.
+
+    A correction is always recorded on the row — "size set to Large — the sheet
+    said gigantic" — so the preview never quietly disagrees with the sheet.
 
     Returns the updated run, ready to save.
     """
@@ -224,25 +250,43 @@ def apply_row_edit(run: dict, row_number: int, changes: dict) -> dict:
     if target is None:
         raise RowNotFound(row_number)
 
-    if "drink" in changes:
-        chosen = str(changes["drink"] or "").strip()
-        previous = target.drink
-        if not chosen:
+    edited = [field for field in changes if field in EDITABLE_FIELDS]
+    if not edited:
+        raise ValueError("nothing to change")
+
+    # resolve_row() is about to say all of this again, for every field, and the
+    # matcher re-derives its own notes on every read. Clear both first so a
+    # correction never leaves the row saying two things about one value.
+    target.issues = [issue for issue in target.issues
+                     if not (issue.code or "").startswith(("option:", "match:"))]
+
+    for field in edited:
+        chosen = _clean(field, changes[field])
+        if field == "drink" and not chosen:
+            # Every other field can legitimately be cleared back to the store
+            # default. A row with no drink is not a row.
             raise ValueError("pick a drink")
-        target.drink = chosen
-        # Drop what this correction invalidates: everything the resolver will
-        # say again, the "no drink" error, and any earlier correction note.
+        previous = getattr(target, field)
+        setattr(target, field, chosen)
+
+        # Drop an earlier correction of the same field, and the error this one
+        # fixes — "no drink in this row" is not true any more.
+        code = f"edited:{field}"
         target.issues = [
             issue for issue in target.issues
-            if not (issue.code or "").startswith("option:")
-            and (issue.code or "") != "edited:drink"
-            and not (issue.level == "error" and issue.field == "drink")
+            if (issue.code or "") != code
+            and not (issue.level == "error" and issue.field == field)
         ]
-        target.issues.append(Issue(
-            "info",
-            f"drink set to \"{chosen}\""
-            + (f" — the sheet said \"{previous}\"" if previous else " — this row was blank"),
-            "drink", row_number, "edited:drink"))
+        label = _FIELD_LABELS[field]
+        if chosen:
+            message = f"{label} set to \"{_describe(chosen)}\""
+        else:
+            message = f"{label} cleared, so the store's default is used"
+        if previous:
+            message += f" — the sheet said \"{_describe(previous)}\""
+        elif field == "drink":
+            message += " — this row was blank"
+        target.issues.append(Issue("info", message, field, row_number, code))
 
     options.resolve_row(target)
 

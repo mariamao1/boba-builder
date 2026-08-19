@@ -10,12 +10,9 @@ from __future__ import annotations
 
 import io
 import csv
-import json
 from collections import Counter
-from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-TARGET_STORE = "650c9c3cd73592bc0e0bd50a"  # 5th Ave, Bk — Task 1's target store
+from . import mapping, menu
 
 COLUMNS = ["Name", "Drink", "Size", "Sugar", "Ice", "Toppings", "Milk", "Notes"]
 
@@ -25,26 +22,9 @@ FALLBACK_ROWS = [
     ["Chen", "Winter Melon Tea", "Large", "30%", "No ice", "Boba, Pudding", "Soy milk", ""],
 ]
 
-_cache: dict | None = None
-
-
 def _load_menu() -> dict | None:
-    global _cache
-    if _cache is not None:
-        return _cache or None
-    path = DATA_DIR / f"menu-{TARGET_STORE}.json"
-    if not path.exists():
-        candidates = sorted(DATA_DIR.glob("menu-*.json"))
-        path = candidates[0] if candidates else None
-    if path is None:
-        _cache = {}
-        return None
-    try:
-        _cache = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        _cache = {}
-        return None
-    return _cache
+    """The raw snapshot, or None. app/menu.py owns the loading and the cache."""
+    return menu.snapshot() or None
 
 
 def _options(item: dict, axis: str) -> list[str]:
@@ -64,8 +44,8 @@ def _canonical_labels(item: dict, axis: str) -> list[str]:
 
 def menu_hints() -> dict:
     """What to tell the user they can type, drawn from the live snapshot."""
-    menu = _load_menu()
-    if not menu:
+    snapshot = _load_menu()
+    if not snapshot:
         return {
             "store": None,
             "item_count": 0,
@@ -77,9 +57,10 @@ def menu_hints() -> dict:
             "milk": ["Soy milk"],
         }
 
-    items = [item for item in menu.get("items", [])
+    excluded = tuple(word.lower() for word in mapping.load().drink_exclude)
+    items = [item for item in snapshot.get("items", [])
              if item.get("available") and not item.get("sold_out")
-             and "gift card" not in item.get("name", "").lower()]
+             and not any(word in item.get("name", "").lower() for word in excluded)]
 
     sizes: Counter = Counter()
     sugar: Counter = Counter()
@@ -95,12 +76,12 @@ def menu_hints() -> dict:
 
     drinks = sorted({item["name"] for item in items})
 
+    captured = menu.captured_at()
     return {
-        "store": menu.get("restaurant_name") or (menu.get("store") or {}).get("name"),
-        "restaurant_id": menu.get("restaurant_id"),
+        "store": snapshot.get("restaurant_name") or (snapshot.get("store") or {}).get("name"),
+        "restaurant_id": snapshot.get("restaurant_id"),
         "item_count": len(items),
-        "captured": menu.get("source", {}).get("fetched_at") if isinstance(
-            menu.get("source"), dict) else None,
+        "captured": captured.isoformat() if captured else None,
         "drinks": drinks,
         "sizes": [name for name, _count in sizes.most_common()],
         # Full vocabularies, commonest first. The page trims what it shows; the
@@ -139,13 +120,13 @@ _EXAMPLE_TASTES = [
 
 def _example_rows() -> list[list[str]]:
     """Three rows using drinks that exist, with options those drinks really have."""
-    menu = _load_menu()
-    if not menu:
+    snapshot = _load_menu()
+    if not snapshot:
         return FALLBACK_ROWS
 
     wanted = ["Taro Slush", "Thai Tea Milk Cap", "Classic Milk Tea", "Winter Melon Tea"]
     by_name = {}
-    for item in menu.get("items", []):
+    for item in snapshot.get("items", []):
         if item.get("available") and not item.get("sold_out"):
             by_name.setdefault(item["name"], item)
 

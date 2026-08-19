@@ -3,7 +3,7 @@
 Turning the uploaded sheet into structured order data: one object per row, in
 the words the store actually uses.
 
-    python3 -m unittest discover -s tests -t .     # 137 tests
+    python3 -m unittest discover -s tests -t .     # 137 tests at the time; 197 now
     python3 -m app.server                          # then drop data/sample-group-order.csv on the page
 
 ---
@@ -78,10 +78,12 @@ can both still see what was actually typed. `app/pipeline.py` documents the full
 contract.
 
 **An empty canonical value means "no choice made, use the store default."** It
-never means the row is broken. Sugar and ice are `min: 0` on every item, 66 Bay
-Ridge items have no `Regular Ice` option at all, and 31 have no
+never means the row is broken. Sugar and ice are `min: 0` on nearly every item,
+66 Bay Ridge items have no `Regular Ice` option at all, and 31 have no
 `Regular Sugar 100%` — so for a lot of drinks the correct order is to send no
-modifier, and an empty string is that instruction.
+modifier, and an empty string is that instruction. (Nearly: Task 4 found four
+items that *require* both, and fills them in per item. See
+`docs/task4-matching.md`.)
 
 ## What gets flagged, and what doesn't
 
@@ -106,10 +108,14 @@ no choice was made, and an underline on anything we couldn't place.
 ### Judgement calls
 
 * **Drinks are never auto-corrected — they're offered.** A near miss produces
-  suggestions (`"Wintermelon Lemonade"` → *did you mean Winter Melon Lemonade?*)
+  suggestions (`"Wintermelon Lemonaid"` → *did you mean Winter Melon Lemonade?*)
   but `canonical.drink` stays empty until somebody says yes. Every other axis is
   a modifier and costs pennies; picking the wrong *drink* costs a whole drink, so
   a person makes that call, not a fuzzy string match. See "Fixing a drink" below.
+  *(Task 4 loosened this by exactly one notch: a name that differs only in
+  spacing or punctuation — `Wintermelon Lemonade` — is the same name, not a
+  guess, and resolves. Anything that isn't the same name still gets asked
+  about.)*
 * **`iced` is not the `Cold` size.** Only 4 items have a Cold option; iced drinks
   are iced by default. An `Iced` temperature resolves to nothing, which is the
   correct iced order. `Hot`, per Task 1, really is a size.
@@ -166,7 +172,7 @@ prove both paths give byte-identical structured output.
 
 ## Tests
 
-137, up from 49. The new ones are in `tests/test_options.py`, mostly against a
+137, up from 49 (197 once Task 4 landed). The new ones are in `tests/test_options.py`, mostly against a
 stub vocabulary so they say what they mean and don't move when the snapshot is
 refreshed; `StoreVocabularyTests` and `SampleFileTests` run against the real
 snapshot.

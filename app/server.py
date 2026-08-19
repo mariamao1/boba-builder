@@ -12,11 +12,16 @@ Routes
     GET  /preview/<run_id>       review the parsed order, hand off to Tasks 3-4
     GET  /template.csv           the order template, filled with real menu items
     POST /api/import             file upload or {"sheet_url": ...} -> run_id
-    GET  /api/runs/<run_id>      the parsed order as JSON
+    GET  /api/runs/<run_id>      the parsed order, matched to the menu, as JSON
     GET  /api/drinks?q=          type-ahead search over the store's menu
-    POST /api/runs/<run_id>/rows/<n>  correct one row: {"drink": "..."}
+    POST /api/runs/<run_id>/rows/<n>  correct one row: {"drink"|"size"|"sugar"|
+                                      "ice"|"milk"|"toppings": ...}
     POST /api/runs/<run_id>/process   push it into the pipeline
     GET  /api/health
+
+Reading a run runs the read-only stages first (`pipeline.enrich`), so the match
+always reflects the rows as they are now rather than as they were when the file
+was written. Nothing that talks to the store happens on a GET.
 """
 
 from __future__ import annotations
@@ -179,7 +184,11 @@ class Handler(BaseHTTPRequestHandler):
         if run is None:
             return self._error("that import has expired — upload the sheet again",
                                HTTPStatus.NOT_FOUND)
-        return self._json({"ok": True, "run": run, "stages": pipeline.status()})
+        # Matched on the way out rather than on the way in: the match is derived
+        # from the rows, so deriving it fresh is the only way it can't go stale
+        # behind a correction. Only read-only stages run here (pipeline.enrich).
+        return self._json({"ok": True, "run": pipeline.enrich(run),
+                           "stages": pipeline.status()})
 
     # --- POST ---------------------------------------------------------------
 
@@ -267,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
             changes = json.loads(self._read_body() or b"{}")
         except json.JSONDecodeError:
             return self._error("could not read that request")
-        if not isinstance(changes, dict) or "drink" not in changes:
+        if not isinstance(changes, dict) or not set(changes) & importer.EDITABLE_FIELDS:
             return self._error("nothing to change")
 
         try:
@@ -277,7 +286,8 @@ class Handler(BaseHTTPRequestHandler):
                                HTTPStatus.NOT_FOUND)
         runs.save(updated, run_id)
         updated["run_id"] = run_id
-        return self._json({"ok": True, "run": updated, "stages": pipeline.status()})
+        return self._json({"ok": True, "run": pipeline.enrich(updated),
+                           "stages": pipeline.status()})
 
     def _process(self, run_id: str):
         if not RUN_ID_RE.fullmatch(run_id):
@@ -289,10 +299,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             result = pipeline.process(run)
         except pipeline.PipelineNotReady as exc:
+            # Everything up to the missing stage still ran and is worth showing.
             return self._json({
                 "ok": False,
                 "pending": True,
                 "error": str(exc),
+                "run": pipeline.enrich(run),
                 "stage": pipeline.next_stage(),
                 "stages": pipeline.status(),
             }, HTTPStatus.ACCEPTED)

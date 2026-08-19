@@ -238,6 +238,8 @@ table.orders .row-no { color: var(--muted); width: 2.6rem; font-variant-numeric:
 table.orders .was { display: block; font-size: .75rem; color: var(--muted); }
 table.orders .unresolved { color: var(--warn); text-decoration: underline dotted; }
 table.orders .default-value { color: var(--muted); }
+/* Asked for, but this drink hasn't got that choice at all. */
+table.orders .dropped { color: var(--muted); text-decoration: line-through; }
 
 /* "Did you mean…?" — suggestions and the full-menu picker, on rows whose drink
    we couldn't find. */
@@ -256,6 +258,7 @@ table.orders .default-value { color: var(--muted); }
   min-width: 11rem; flex: 1 1 11rem;
 }
 .drink-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+select.drink-input { min-width: 9rem; flex: 0 1 auto; cursor: pointer; }
 
 .actions { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; margin-top: 1.2rem; }
 .stage-list { list-style: none; padding: 0; margin: .6rem 0 0; font-size: .9rem; }

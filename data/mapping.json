@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "notes": [
+    "How people's words map onto Kung Fu Tea's option set. Edit this file, not the code.",
+    "Keys on the left are normalised for comparison: lowercased, punctuation to spaces,",
+    "% kept. So 'Half Sweet!' matches the key 'half sweet'.",
+    "Values on the right are canonical STORE-LEVEL labels, not per-item literals:",
+    "'Large', never 'Large .7'. app/matcher.py walks the second arrow per item.",
+    "Anything naming a real menu string is checked by `python3 -m app.mapping`."
+  ],
+
+  "size": {
+    "words": {
+      "m": "Medium", "med": "Medium", "md": "Medium", "medium": "Medium",
+      "regular": "Medium", "reg": "Medium", "standard": "Medium", "normal": "Medium",
+      "l": "Large", "lg": "Large", "large": "Large", "big": "Large",
+      "biggest": "Large", "largest": "Large",
+      "hot": "Hot", "h": "Hot", "warm": "Hot",
+      "cold": "Cold"
+    },
+    "nearest": {
+      "s": ["Medium", "this store's smallest is Medium"],
+      "small": ["Medium", "this store's smallest is Medium"],
+      "sm": ["Medium", "this store's smallest is Medium"],
+      "xl": ["Large", "this store's biggest is Large"],
+      "extra large": ["Large", "this store's biggest is Large"],
+      "xtra large": ["Large", "this store's biggest is Large"],
+      "venti": ["Large", "this store's biggest is Large"],
+      "grande": ["Medium", "read as Medium"]
+    },
+    "means_default": ["iced", "ice", "cold drink", "as normal", "whatever", "any"],
+    "temperature": {
+      "hot": "Hot", "warm": "Hot",
+      "iced": "", "ice": "", "cold": ""
+    }
+  },
+
+  "sugar": {
+    "words": {
+      "no": 0, "none": 0, "zero": 0, "unsweetened": 0, "unsweet": 0, "sugar free": 0,
+      "no sugar": 0, "without": 0, "plain": 0,
+      "little": 30, "light": 30, "lightly sweet": 30, "slightly sweet": 30, "lite": 30,
+      "quarter": 30,
+      "half": 50, "half sweet": 50, "medium": 50, "mid": 50,
+      "less": 70, "less sweet": 70, "lower": 70, "reduced": 70, "a bit less": 70,
+      "regular": 100, "normal": 100, "standard": 100, "full": 100, "default": 100,
+      "full sweet": 100, "sweet": 100, "yes": 100,
+      "extra": 120, "extra sweet": 120, "more": 120, "very sweet": 120, "max": 120
+    },
+    "noise": ["sugar", "sweetness", "sweetened", "sweet", "level", "s"]
+  },
+
+  "ice": {
+    "words": {
+      "no": "no", "none": "no", "zero": "no", "0": "no", "without": "no",
+      "iceless": "no", "hold the": "no", "skip": "no",
+      "less": "less", "light": "less", "little": "less", "half": "less",
+      "lite": "less", "easy": "less", "easy on the": "less",
+      "regular": "regular", "normal": "regular", "standard": "regular",
+      "full": "regular", "yes": "regular", "default": "regular", "some": "regular",
+      "more": "more", "extra": "more", "lots": "more", "lots of": "more",
+      "heavy": "more", "double": "more", "max": "more"
+    },
+    "noise": ["ice", "iced", "cubes"]
+  },
+
+  "milk": {
+    "words": {
+      "soy": "Soy Milk", "soy milk": "Soy Milk", "soya": "Soy Milk"
+    },
+    "means_default": ["none", "no", "n a", "na", "regular", "regular milk", "normal",
+                      "standard", "default", "milk", "whole", "whole milk", "dairy",
+                      "cow", "cows milk", "skim", "skim milk", "2%", "2% milk", "plain"],
+    "not_sold": ["oat", "almond", "cashew", "coconut milk", "rice milk", "lactose",
+                 "lactaid", "macadamia", "pea milk", "half and half", "dairy free",
+                 "non dairy", "nondairy"]
+  },
+
+  "toppings": {
+    "words": {
+      "pearl": "Boba", "pearls": "Boba", "tapioca": "Boba", "tapioca pearls": "Boba",
+      "black pearls": "Boba", "bubbles": "Boba", "black boba": "Boba", "bubble": "Boba",
+      "tapioca boba": "Boba",
+      "oreo": "OREO®", "oreos": "OREO®", "cookies": "OREO®", "cookie": "OREO®",
+      "aloe": "Aloe Jelly", "aloe vera": "Aloe Jelly",
+      "grass jelly": "Herbal Jelly",
+      "cheese foam": "Milk Cap", "cheese cap": "Milk Cap", "milk foam": "Milk Cap",
+      "salted cheese": "Milk Cap", "cream cap": "Milk Cap", "foam": "Milk Cap",
+      "red beans": "Red Bean", "redbean": "Red Bean", "azuki": "Red Bean",
+      "chia": "Chia Seeds", "chia seed": "Chia Seeds",
+      "espresso": "Espresso Shot", "coffee shot": "Espresso Shot",
+      "extra shot": "Espresso Shot", "shot of espresso": "Espresso Shot",
+      "crystal": "Crystal Boba", "white pearls": "Crystal Boba",
+      "white boba": "Crystal Boba", "agar boba": "Crystal Boba",
+      "protein": "Protein Add On", "protein powder": "Protein Add On",
+      "brown sugar": "Brown Sugar Wow Boba", "wow boba": "Brown Sugar Wow Boba",
+      "flan": "Pudding", "egg pudding": "Pudding", "custard": "Pudding"
+    },
+    "ambiguous": {
+      "popping boba": ["Strawberry Popping Boba", "Coffee Popping Boba",
+                       "Mango Popping Boba"],
+      "popping": ["Strawberry Popping Boba", "Coffee Popping Boba",
+                  "Mango Popping Boba"],
+      "jelly": ["Mango Jelly", "Aloe Jelly", "Herbal Jelly", "Nata Jelly"],
+      "milk cap": ["Milk Cap", "Strawberry Milk Cap", "Matcha Milk Cap"]
+    },
+    "fuzzy_cutoff": 0.85
+  },
+
+  "drinks": {
+    "aliases": {
+      "classic milk tea": "KF Milk Tea",
+      "kung fu milk tea": "KF Milk Tea",
+      "kft milk tea": "KF Milk Tea",
+      "house milk tea": "KF Milk Tea",
+      "original milk tea": "KF Milk Tea",
+      "winter melon": "Winter Melon Tea",
+      "wintermelon": "Winter Melon Tea",
+      "matcha latte": "Matcha Milk"
+    },
+    "exclude": ["gift card", "thanks for your service"],
+    "suggestion_cutoff": 0.5
+  },
+
+  "matching": {
+    "axis_groups": {
+      "Choose A Size": "size",
+      "Sugar Level": "sugar",
+      "Ice Level": "ice",
+      "Choose Topping(s)": "toppings",
+      "Included Topping": "toppings",
+      "Croffle Topping Options": "toppings",
+      "Waffle/ Cake Topping": "toppings",
+      "Milk Alternative": "milk"
+    },
+    "assume_default_when_missing": {
+      "sugar": ["100%"],
+      "ice": ["Regular Ice"]
+    },
+    "required_group_fallback": {
+      "size": ["Medium", "Large"],
+      "sugar": ["Regular Sugar 100%", "Less S 70%"],
+      "ice": ["Regular Ice", "Less Ice"]
+    },
+    "menu_stale_days": 14
+  }
+}

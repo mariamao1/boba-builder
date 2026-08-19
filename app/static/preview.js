@@ -31,41 +31,126 @@ function issueList(issues) {
   return list;
 }
 
+const money = (value) => `$${(value || 0).toFixed(2)}`;
+
 /* One option cell: what we resolved it to, and what the sheet said if that
    differs. A value we couldn't place is shown as typed and underlined, never
-   blanked — the whole point is that the row still reaches the person. */
-function optionCell(resolved, raw) {
+   blanked — the whole point is that the row still reaches the person.
+
+   When the matched drink turns out not to offer it, the cell also carries the
+   ways out: this drink's own options, one click each. */
+function optionCell(row, axis, resolved, raw) {
   const cell = el('td');
   const typed = (raw || '').trim();
-  if (resolved) {
-    cell.append(document.createTextNode(resolved));
-    if (typed && typed.toLowerCase() !== resolved.toLowerCase()) {
+  const problems = ((row.match && row.match.unmapped) || []).filter((u) => u.axis === axis);
+  // Asked for, and this drink simply hasn't got that axis — a slush has no ice
+  // level. Nothing to pick, so say plainly that it isn't going in the order.
+  const gone = ((row.match && row.match.dropped) || []).find((d) => d.axis === axis);
+  if (gone) {
+    const cell = el('td');
+    cell.append(el('span', 'dropped', gone.asked));
+    cell.append(el('span', 'was', 'not sent'));
+    return cell;
+  }
+  // A row can ask for four toppings and only trip on the third, so the ones
+  // that fitted stay shown as normal and only the odd one out gets a fixer.
+  const kept = axis === 'toppings'
+    ? ((row.canonical && row.canonical.toppings) || [])
+        .filter((name) => !problems.some((p) => p.asked === name)).join(', ')
+    : (problems.length ? '' : resolved);
+
+  if (kept) {
+    cell.append(document.createTextNode(kept));
+    if (typed && typed.toLowerCase() !== kept.toLowerCase()) {
       cell.append(el('span', 'was', typed));
     }
+  } else if (problems.length) {
+    cell.append(el('span', 'unresolved', problems.map((p) => p.asked).join(', ')));
   } else if (typed) {
     cell.append(el('span', 'unresolved', typed));
   } else {
     cell.append(el('span', 'default-value', '—'));
   }
+  problems.forEach((problem) => cell.append(optionFixer(row, axis, problem)));
   return cell;
 }
 
 /* Send one row's correction and redraw from whatever comes back. */
-async function setDrink(rowNumber, drink, feedback) {
-  if (!drink) return;
-  feedback.textContent = 'Saving…';
+async function editRow(rowNumber, changes, feedback) {
+  if (feedback) feedback.textContent = 'Saving…';
   try {
     const response = await fetch(`/api/runs/${runId}/rows/${rowNumber}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ drink }),
+      body: JSON.stringify(changes),
     });
     const data = await response.json();
     if (!data.ok) throw new Error(data.error || 'that didn\'t save');
     render(data.run, data.stages);
   } catch (error) {
-    feedback.textContent = error.message;
+    if (feedback) feedback.textContent = error.message;
   }
+}
+
+const setDrink = (rowNumber, drink, feedback) =>
+  drink ? editRow(rowNumber, { drink }, feedback) : undefined;
+
+/* What to send for one axis when somebody picks a replacement. Toppings are a
+   list, so the pick swaps out the one entry that didn't fit and leaves the rest
+   of the order alone; "" drops it and takes the store's default. */
+function changeFor(row, axis, asked, picked) {
+  if (axis !== 'toppings') return { [axis]: picked };
+  const current = (row.canonical && row.canonical.toppings) || row.toppings || [];
+  const next = current
+    .map((name) => (name === asked ? picked : name))
+    .filter(Boolean);
+  return { toppings: next };
+}
+
+/* The fix-it control for a modifier this drink can't do: what it can do
+   instead, plus the option of going without. Never applied on its own. */
+function optionFixer(row, axis, problem) {
+  const wrap = el('div', 'fixer');
+  const feedback = el('div', 'why');
+  const choices = ((row.match && row.match.choices) || {})[axis] || [];
+  const line = el('div', 'suggest-line');
+
+  const pick = (value) => editRow(
+    row.row_number, changeFor(row, axis, problem.asked, value), feedback);
+
+  if (problem.asked) line.append(el('span', 'why', `${problem.asked} →`));
+  if (choices.length > 6) {
+    // 21 toppings is a menu, not a row of buttons.
+    const select = el('select', 'drink-input');
+    select.setAttribute('aria-label', `Choose the ${axis} for row ${row.row_number}`);
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = 'pick one…';
+    select.append(blank);
+    choices.forEach((name) => {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      select.append(option);
+    });
+    select.addEventListener('change', () => { if (select.value) pick(select.value); });
+    line.append(select);
+  } else {
+    choices.forEach((name) => {
+      const button = el('button', 'chip', name);
+      button.type = 'button';
+      button.addEventListener('click', () => pick(name));
+      line.append(button);
+    });
+  }
+
+  const drop = el('button', 'chip apply', choices.length ? 'Leave it out' : 'Clear');
+  drop.type = 'button';
+  drop.addEventListener('click', () => pick(''));
+  line.append(drop);
+
+  wrap.append(line, feedback);
+  return wrap;
 }
 
 /* The drink cell for a row we couldn't match: what they wrote, the near
@@ -175,15 +260,22 @@ function render(run, stages) {
 
   /* --- summary ------------------------------------------------------------ */
   const summary = card();
+  const matched = run.match || null;
   const statList = el('ul', 'stats');
-  [
-    [stats.drinks || 0, 'drinks'],
-    [stats.people || 0, 'people'],
-    [stats.rows || 0, 'rows read'],
-    [stats.warnings || 0, 'to check'],
-  ].forEach(([value, label]) => {
+  const tiles = [
+    [String(stats.drinks || 0), 'drinks'],
+    [String(stats.people || 0), 'people'],
+    [String(stats.rows || 0), 'rows read'],
+  ];
+  if (matched) {
+    tiles.push([`${matched.ready || 0}/${(run.rows || []).length}`, 'on the menu']);
+    tiles.push([money(matched.subtotal), 'before tax']);
+  } else {
+    tiles.push([String(stats.warnings || 0), 'to check']);
+  }
+  tiles.forEach(([value, label]) => {
     const item = el('li');
-    item.append(el('b', null, String(value)), el('span', null, label));
+    item.append(el('b', null, value), el('span', null, label));
     statList.append(item);
   });
   summary.append(statList);
@@ -211,8 +303,9 @@ function render(run, stages) {
   const table = el('table', 'orders');
   const head = el('thead');
   const headRow = el('tr');
-  ['#', 'Name', 'Drink', 'Size', 'Sugar', 'Ice', 'Toppings', 'Milk', 'Qty']
-    .forEach((label) => headRow.append(el('th', null, label)));
+  const columns = ['#', 'Name', 'Drink', 'Size', 'Sugar', 'Ice', 'Toppings', 'Milk', 'Qty'];
+  if (matched) columns.push('Price');
+  columns.forEach((label) => headRow.append(el('th', null, label)));
   head.append(headRow);
   table.append(head);
 
@@ -223,14 +316,21 @@ function render(run, stages) {
       : 'bad';
     const tr = el('tr', worst);
     const canonical = row.canonical || {};
+    const found = row.match || {};
+    // The item the cart will actually order, once there is one. Until then the
+    // name the sheet gave, resolved as far as it went.
+    const item = found.item || null;
+    const name = (item && item.name) || canonical.drink;
+
     tr.append(el('td', 'row-no', String(row.row_number)));
     tr.append(el('td', 'who', row.person || '—'));
     const drink = el('td');
-    if (canonical.drink) {
-      drink.append(document.createTextNode(canonical.drink));
-      if (row.drink && row.drink.toLowerCase() !== canonical.drink.toLowerCase()) {
+    if (name) {
+      drink.append(document.createTextNode(name));
+      if (row.drink && row.drink.toLowerCase() !== name.toLowerCase()) {
         drink.append(el('span', 'was', row.drink));
       }
+      if (item && item.category) drink.append(el('span', 'was', item.category));
     } else if (row.drink) {
       drink.append(el('span', 'unresolved', row.drink));
     } else {
@@ -238,21 +338,24 @@ function render(run, stages) {
     }
     if (row.notes) drink.append(el('div', 'why', row.notes));
     // Nothing on the menu matched, so offer the ways out.
-    if (!canonical.drink) drink.append(drinkFixer(row));
+    if (!name) drink.append(drinkFixer(row));
     tr.append(drink);
-    tr.append(optionCell(canonical.size, row.size || row.temperature));
-    tr.append(optionCell(canonical.sugar, row.sugar));
-    tr.append(optionCell(canonical.ice, row.ice));
-    tr.append(optionCell((canonical.toppings || []).join(', '),
+    tr.append(optionCell(row, 'size', canonical.size, row.size || row.temperature));
+    tr.append(optionCell(row, 'sugar', canonical.sugar, row.sugar));
+    tr.append(optionCell(row, 'ice', canonical.ice, row.ice));
+    tr.append(optionCell(row, 'toppings', (canonical.toppings || []).join(', '),
                          (row.toppings || []).join(', ')));
-    tr.append(optionCell(canonical.milk, row.milk));
+    tr.append(optionCell(row, 'milk', canonical.milk, row.milk));
     tr.append(el('td', 'qty', String(row.quantity)));
+    if (matched) {
+      tr.append(el('td', 'qty', found.status === 'ready' ? money(found.total) : '—'));
+    }
     tbody.append(tr);
 
     if (row.issues && row.issues.length) {
       const noteRow = el('tr', worst);
       const cell = el('td', 'why');
-      cell.colSpan = 9;
+      cell.colSpan = columns.length;
       cell.textContent = row.issues.map((issue) => issue.message).join(' · ');
       noteRow.append(cell);
       tbody.append(noteRow);
@@ -278,6 +381,14 @@ function render(run, stages) {
     'Values are shown as this store names them, with what your sheet said underneath. '
     + 'A dash means no choice was made, so the store\'s default is used. Anything '
     + 'underlined we couldn\'t find on the menu — it\'s still here, just check it.'));
+
+  if (matched) {
+    const captured = matched.menu_captured ? ` captured ${matched.menu_captured}` : '';
+    orderCard.append(el('p', 'muted',
+      `Matched against ${matched.menu_items} drinks on the ${matched.store} menu${captured}. `
+      + 'Prices are that menu\'s, before tax and fees — the real total comes from the '
+      + 'store when the cart is built.'));
+  }
 
   /* --- next step ---------------------------------------------------------- */
   const next = card('Next: build the cart');
@@ -334,10 +445,15 @@ function render(run, stages) {
           outcome.textContent = 'The pipeline ran. Reload to see the result.';
         }
       } else if (data.pending) {
-        outcome.className = 'status';
-        outcome.textContent = '';
-        outcome.append(el('strong', null, 'Your order is ready and waiting.'));
-        outcome.append(document.createTextNode(
+        // Everything up to the missing stage ran; show that rather than only
+        // the apology for what didn't.
+        if (data.run) render(data.run, data.stages);
+        const spot = document.querySelector('.status');
+        if (!spot) return;
+        spot.className = 'status';
+        spot.textContent = '';
+        spot.append(el('strong', null, 'Your order is matched and waiting.'));
+        spot.append(document.createTextNode(
           `The next step (${pending.length ? pending[0].description.toLowerCase() : 'the cart builder'}) `
           + 'isn\'t built yet. Nothing was lost — this import is saved and will flow straight '
           + 'through once it lands.'));
