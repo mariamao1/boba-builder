@@ -328,6 +328,7 @@ class StoreMenu:
         self.restaurant_id = data.get("restaurant_id") or ""
         self.store = data.get("restaurant_name") or (data.get("store") or {}).get("name") or ""
         self.items = [MenuItem(item, self.config) for item in data.get("items") or []]
+        self._vocabulary: dict | None = None
 
         excluded = tuple(word.lower() for word in self.config.drink_exclude)
         self.drinks = [item for item in self.items
@@ -398,6 +399,28 @@ class StoreMenu:
         if len(distinct) > 1:
             return Match(None, Match.AMBIGUOUS, sorted(distinct))
         return Match()
+
+    def vocabulary(self) -> dict:
+        """Every label any drink here offers, per axis.
+
+        The fallback for a row whose drink nobody has picked yet: there is no
+        item to ask, so the review screen offers what the store has and the
+        match narrows it the moment a drink is chosen. Walks every item, so the
+        answer is kept once it has been worked out.
+        """
+        if self._vocabulary is not None:
+            return self._vocabulary
+        found: dict[str, list[str]] = {axis: [] for axis in
+                                       ("size", "sugar", "ice", "milk", "toppings")}
+        for item in self.drinks:
+            for axis, names in found.items():
+                for name in (item.options(axis) if axis == "toppings"
+                             else item.labels(axis)):
+                    if name not in names:
+                        names.append(name)
+        found["sugar"].sort(key=lambda label: int(re.sub(r"\D", "", label) or 0))
+        self._vocabulary = found
+        return found
 
     def unorderable(self, text: str) -> MenuItem | None:
         """An item this store lists but we won't order — sold out, or a gift card.

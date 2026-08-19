@@ -350,7 +350,24 @@ class RowMatcher:
             "unmapped": unmapped,
             "dropped": dropped,
             "choices": choices,
+            "available": self.available(item),
         }, issues
+
+    def available(self, item: menu_module.MenuItem) -> dict:
+        """Everything this one drink can be ordered with, per axis.
+
+        `choices` is only the axes that went wrong. This is the whole list, so
+        the review screen can offer a dropdown of what is actually possible for
+        this drink rather than the store's vocabulary as a whole — the two are
+        very different (a slush has no ice level at all).
+        """
+        return {
+            "size": item.labels("size"),
+            "sugar": item.labels("sugar"),
+            "ice": item.labels("ice"),
+            "milk": item.labels("milk"),
+            "toppings": item.options("toppings"),
+        }
 
 
 def _already_said(row: dict, field: str) -> bool:
@@ -448,6 +465,9 @@ def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
         "restaurant_id": store.restaurant_id,
         "menu_items": len(store.drinks),
         "menu_captured": captured.isoformat() if captured else None,
+        # What the whole store offers, for a row whose drink isn't picked yet.
+        # Once it is, the row's own `match.available` is the narrower truth.
+        "vocabulary": store.vocabulary(),
         "ready": ready,
         "needs_drink": unmatched,
         "skipped": sum(1 for row in rows if row["match"]["status"] == SKIPPED),

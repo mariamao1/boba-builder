@@ -433,6 +433,112 @@ class RunShapeTests(unittest.TestCase):
                       " ".join(i["message"] for i in empty["issues"]))
 
 
+class ReviewScreenTests(unittest.TestCase):
+    """What the review & edit controls are built from, and what they can change."""
+
+    def test_a_matched_row_offers_its_own_drinks_options(self):
+        row = one({"drink": "Taro Slush", "canonical": {"drink": "Taro Slush"}})
+        available = row["match"]["available"]
+        self.assertEqual(available["size"], ["Medium", "Large"])   # labels, not literals
+        self.assertEqual(available["sugar"], ["100%", "70%", "50%", "0%"])
+        self.assertIn("OREO®", available["toppings"])
+        # A slush has no ice level and no milk alternative: an empty list, so the
+        # screen shows "not on this drink" rather than a dropdown of the store's.
+        self.assertEqual(available["ice"], [])
+        self.assertEqual(available["milk"], [])
+
+    def test_the_store_vocabulary_is_the_fallback_before_a_drink_is_picked(self):
+        run = matcher.match(run_for([{"drink": "Blueberry Explosion"}]), store())
+        vocabulary = run["match"]["vocabulary"]
+        self.assertEqual(vocabulary["size"], ["Medium", "Large", "Cold"])
+        self.assertEqual(vocabulary["sugar"], ["0%", "50%", "70%", "100%"])
+        self.assertIn("Soy Milk", vocabulary["milk"])
+        # And the row itself has nothing to offer, so the page uses the above.
+        self.assertNotIn("available", run["rows"][0]["match"])
+
+
+class RowEditingTests(unittest.TestCase):
+    """The edits the review screen makes, through the same door as everything else."""
+
+    def setUp(self):
+        result = importer.import_bytes(SAMPLE.read_bytes(), "sample-group-order.csv")
+        self.run = result.as_dict()
+        self.numbers = {row["person"]: row["row_number"] for row in self.run["rows"]}
+
+    def row(self, run, number):
+        return [row for row in run["rows"] if row["row_number"] == number][0]
+
+    def messages(self, run, number):
+        return " · ".join(issue["message"] for issue in self.row(run, number)["issues"])
+
+    def test_the_quantity_stepper(self):
+        number = self.numbers["Alice Chen"]
+        updated = importer.apply_row_edit(self.run, number, {"quantity": 3})
+        self.assertEqual(self.row(updated, number)["quantity"], 3)
+        self.assertIn('quantity set to "3"', self.messages(updated, number))
+        # And the line price follows it.
+        matched = pipeline.enrich(updated)
+        self.assertEqual(self.row(matched, number)["match"]["quantity"], 3)
+
+    def test_a_quantity_nobody_meant(self):
+        number = self.numbers["Alice Chen"]
+        with self.assertRaises(ValueError):
+            importer.apply_row_edit(self.run, number, {"quantity": 0})
+        with self.assertRaises(ValueError):
+            importer.apply_row_edit(self.run, number, {"quantity": "lots"})
+        capped = importer.apply_row_edit(self.run, number, {"quantity": 500})
+        self.assertEqual(self.row(capped, number)["quantity"], importer.MAX_QUANTITY)
+
+    def test_naming_the_unnamed_row_clears_the_warning(self):
+        number = self.numbers[""]
+        self.assertIn("no name", self.messages(self.run, number))
+        updated = importer.apply_row_edit(self.run, number, {"person": "Kim"})
+        self.assertEqual(self.row(updated, number)["person"], "Kim")
+        self.assertNotIn("no name", self.messages(updated, number))
+        self.assertIn('name set to "Kim"', self.messages(updated, number))
+
+    def test_a_topping_count_survives_editing_the_others(self):
+        # The screen sends the count back with the name, so adding Boba to
+        # Tomás's row doesn't quietly halve his pudding.
+        number = self.numbers["Tomás"]
+        updated = pipeline.enrich(importer.apply_row_edit(
+            self.run, number, {"toppings": ["2x Pudding", "Red Bean", "Boba"]}))
+        sent = {option["name"]: option["quantity"]
+                for option in self.row(updated, number)["match"]["options"]
+                if option["axis"] == "toppings"}
+        self.assertEqual(sent, {"Pudding": 2, "Red Bean": 1, "Boba": 1})
+
+    def test_editing_the_quantity_drops_what_the_import_said_about_it(self):
+        number = self.numbers["Dan"]   # "Winter Melon Tea x2"
+        self.assertIn("read a quantity of 2", self.messages(self.run, number))
+        updated = importer.apply_row_edit(self.run, number, {"quantity": 1})
+        self.assertNotIn("read a quantity of 2", self.messages(updated, number))
+
+    def test_a_note_about_the_sheet_itself_survives_an_edit(self):
+        # "we moved this value out of the wrong column" is still true afterwards.
+        run = importer.import_json(
+            '[{"Name": "Ana", "Drink": "Taro Slush", "Ice": "boba"}]').as_dict()
+        number = run["rows"][0]["row_number"]
+        self.assertIn("moved", self.messages(run, number))
+        updated = importer.apply_row_edit(run, number, {"ice": "No Ice"})
+        self.assertIn("moved", self.messages(updated, number))
+
+    def test_several_fields_at_once(self):
+        number = self.numbers["Sam"]
+        updated = pipeline.enrich(importer.apply_row_edit(self.run, number, {
+            "drink": "Winter Melon Lemonade", "sugar": "70%", "milk": "",
+            "toppings": ["Mango Popping Boba"], "quantity": 2}))
+        row = self.row(updated, number)
+        self.assertEqual(row["match"]["status"], matcher.READY)
+        self.assertEqual(row["match"]["unmapped"], [])
+        self.assertEqual(row["quantity"], 2)
+
+    def test_an_unknown_field_is_refused(self):
+        number = self.numbers["Sam"]
+        with self.assertRaises(ValueError):
+            importer.apply_row_edit(self.run, number, {"price": "0.00"})
+
+
 class MappingConfigTests(unittest.TestCase):
     def test_the_shipped_file_loads_without_complaint(self):
         config = mapping.load()

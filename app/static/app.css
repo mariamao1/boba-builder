@@ -260,6 +260,43 @@ table.orders .dropped { color: var(--muted); text-decoration: line-through; }
 .drink-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 select.drink-input { min-width: 9rem; flex: 0 1 auto; cursor: pointer; }
 
+/* --- review & edit -------------------------------------------------------- */
+
+.card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  flex-wrap: wrap; margin-bottom: .6rem;
+}
+.card-head h2 { margin: 0; }
+.card-head .btn { padding: .35rem .8rem; font-size: .88rem; }
+
+/* Cells that are controls rather than text. */
+.cell-input {
+  font: inherit; font-size: .85rem; padding: .25rem .4rem; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--card); color: inherit;
+  max-width: 11rem; width: 100%;
+}
+select.cell-input { cursor: pointer; }
+.cell-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+table.orders td .drink-input { min-width: 8rem; }
+
+.chip-row { display: flex; flex-wrap: wrap; gap: .25rem; margin-bottom: .3rem; }
+.chip.topping { display: inline-flex; align-items: center; gap: .35rem; }
+.chip.topping .remove { color: var(--muted); font-size: .9em; }
+.chip.topping:hover .remove, .chip.topping:focus-visible .remove { color: var(--err); }
+
+.stepper { display: inline-flex; align-items: center; gap: .15rem; }
+.stepper .step {
+  font: inherit; line-height: 1; width: 1.6rem; height: 1.6rem; padding: 0;
+  border: 1px solid var(--line); background: var(--card); color: inherit;
+  border-radius: 7px; cursor: pointer;
+}
+.stepper .step:hover:not([disabled]) { border-color: var(--accent); color: var(--accent); }
+.stepper .step[disabled] { opacity: .35; cursor: not-allowed; }
+.stepper .count {
+  min-width: 1.4rem; text-align: center; font-variant-numeric: tabular-nums;
+  color: var(--ink); font-weight: 600;
+}
+
 .actions { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; margin-top: 1.2rem; }
 .stage-list { list-style: none; padding: 0; margin: .6rem 0 0; font-size: .9rem; }
 .stage-list li { display: flex; gap: .5rem; align-items: baseline; padding: .2rem 0; }

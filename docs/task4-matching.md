@@ -3,7 +3,7 @@
 Turning the parsed sheet into the store's exact menu items and the exact
 modifier strings those items accept.
 
-    python3 -m unittest discover -s tests -t .   # 197 tests
+    python3 -m unittest discover -s tests -t .   # 207 tests
     python3 -m app.mapping                       # does the vocabulary still fit the menu?
     python3 -m app.matcher .runs/<id>.json       # match a saved import from the CLI
     python3 -m app.server                        # then drop data/sample-group-order.csv on the page
@@ -134,19 +134,56 @@ Three of these deserve their own note:
 
 ## Fixing things in the page
 
-Everything unmappable reaches the preview as something to click, and every fix
-goes through the same endpoint and the same resolution the import used:
+Two ways in, one door. Anything unmappable is a button where it went wrong —
+*"Winter Melon Tea doesn't do 0% sugar"* with `100% / 70% / 50% / 30%` beside
+it. And **Review & edit**, at the top of the order, turns the whole table into
+controls for the times when nothing is wrong and somebody just changed their
+mind:
+
+| Column | Control |
+|---|---|
+| Name | text box |
+| Drink | search box, typeahead over the menu (`/api/drinks`, server-ranked) |
+| Size / Sugar / Ice / Milk | dropdown of **what that drink offers**, plus "store default" |
+| Toppings | one removable chip each, plus a typeahead to add more |
+| Qty | − / + |
+
+The dropdowns are the point: they come from `match.available`, which is the
+matched item's own vocabulary, so a Taro Slush offers Medium and Large and says
+*"not on this drink"* where the ice would be. A row whose drink nobody has
+picked yet falls back to `match.vocabulary` — everything the store sells —
+and narrows the moment a drink is chosen. A value the sheet asked for that the
+drink hasn't got stays selected and labelled *"— not on this drink"* rather than
+the dropdown silently snapping to something nobody chose.
+
+Every control posts the same thing:
 
     POST /api/runs/<run_id>/rows/<n>
       {"drink": "Winter Melon Lemonade"}      pick the drink
       {"sugar": "30%"}                        pick a level this drink has
-      {"toppings": ["Boba", "Mango Jelly"]}   swap the topping that didn't fit
+      {"toppings": ["Boba", "2x Pudding"]}    the whole list, counts included
       {"milk": ""}                            leave it out, take the default
+      {"quantity": 3}                         1..20; 0 and "lots" are refused
+      {"person": "Kim"}                       and the "no name" warning goes
 
 `importer.apply_row_edit()` handles all of them: it records what changed
 (`sugar level set to "30%" — the sheet said "no sugar"`), re-resolves the row
 through `options.py`, and the match is re-derived on the way out. A correction
 cannot produce a row the importer couldn't have.
+
+Two details that are easy to get wrong and are tested:
+
+* **Topping counts round-trip.** The chips send `2x Pudding` back, not
+  `Pudding`, so adding Boba to a row doesn't quietly halve somebody's pudding.
+* **Editing a field clears what the import said about it** — "no drink in this
+  row", "no name, so this drink will be unlabelled", "read a quantity of 2 from
+  the drink name" — but keeps notes *about the sheet* ("moved this from Ice to
+  Toppings"), which are still true.
+
+Every save redraws the page from the server's answer rather than patching the
+cell, because one change moves the line price, the subtotal, the row's notes and
+sometimes a sheet-level warning. The caret is put back where it was afterwards,
+so typing a name doesn't throw you out of the field.
 
 **The match is derived on every read, never stored.** `GET /api/runs/<id>` runs
 `pipeline.enrich()`, which runs the stages marked *pure* — read-only, no network,

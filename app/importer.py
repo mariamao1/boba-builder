@@ -209,13 +209,17 @@ class RowNotFound(KeyError):
     """That row number isn't in this run."""
 
 
-#: What the preview is allowed to correct on a row. Everything else about an
-#: import stays as the sheet had it — this is for fixing what we couldn't place,
-#: not for editing somebody's order on their behalf.
-EDITABLE_FIELDS = frozenset({"drink", "size", "sugar", "ice", "milk", "toppings"})
+#: What the preview's review screen is allowed to change on a row: the order
+#: itself. The source, the column mapping and everything the sheet said stay as
+#: they were — a correction is recorded alongside the original, never over it.
+EDITABLE_FIELDS = frozenset({"drink", "size", "sugar", "ice", "milk", "toppings",
+                             "quantity", "person"})
 
 _FIELD_LABELS = {"drink": "drink", "size": "size", "sugar": "sugar level",
-                 "ice": "ice level", "milk": "milk", "toppings": "toppings"}
+                 "ice": "ice level", "milk": "milk", "toppings": "toppings",
+                 "quantity": "quantity", "person": "name"}
+
+MAX_QUANTITY = 20  # same ceiling the importer puts on a typo'd quantity column
 
 
 def _clean(field: str, value):
@@ -224,6 +228,14 @@ def _clean(field: str, value):
         if isinstance(value, str):
             value = [value] if value.strip() else []
         return [str(entry).strip() for entry in value or [] if str(entry).strip()]
+    if field == "quantity":
+        try:
+            count = int(str(value).strip() or 1)
+        except ValueError:
+            raise ValueError("that quantity isn't a number") from None
+        if count < 1:
+            raise ValueError("a quantity of nothing isn't an order — remove the row instead")
+        return min(count, MAX_QUANTITY)
     return str(value or "").strip()
 
 
@@ -269,22 +281,24 @@ def apply_row_edit(run: dict, row_number: int, changes: dict) -> dict:
         previous = getattr(target, field)
         setattr(target, field, chosen)
 
-        # Drop an earlier correction of the same field, and the error this one
-        # fixes — "no drink in this row" is not true any more.
+        # Drop an earlier correction of the same field, and whatever the import
+        # said about it while reading the sheet: "no drink in this row" and "no
+        # name, so this drink will be unlabelled" are not true any more. Notes
+        # that carry a code describe the sheet itself ("moved this from Ice to
+        # Toppings") and are still true, so they stay.
         code = f"edited:{field}"
         target.issues = [
             issue for issue in target.issues
-            if (issue.code or "") != code
-            and not (issue.level == "error" and issue.field == field)
+            if (issue.code or "") != code and not (issue.field == field and not issue.code)
         ]
         label = _FIELD_LABELS[field]
-        if chosen:
+        if chosen or field == "quantity":
             message = f"{label} set to \"{_describe(chosen)}\""
         else:
             message = f"{label} cleared, so the store's default is used"
-        if previous:
+        if previous and previous != chosen:
             message += f" — the sheet said \"{_describe(previous)}\""
-        elif field == "drink":
+        elif not previous and field in ("drink", "person"):
             message += " — this row was blank"
         target.issues.append(Issue("info", message, field, row_number, code))
 

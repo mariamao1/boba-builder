@@ -3,12 +3,40 @@
 const runId = window.location.pathname.split('/').filter(Boolean).pop();
 const body = document.getElementById('body');
 
+/* Review & edit turns the whole table into controls. Both live outside render()
+   because every save redraws the page from the server's answer — the mode has
+   to survive that, and so does the caret, or editing a name would throw you out
+   of the field on the first keystroke that saves. */
+let editing = false;
+let focusKey = null;
+
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
 };
+
+/* Mark a control so the redraw after a save can put the caret back in it. */
+function keepFocus(node, key) {
+  node.setAttribute('data-focus', key);
+  node.addEventListener('focus', () => { focusKey = key; });
+  return node;
+}
+
+function restoreFocus() {
+  if (!focusKey || !document.querySelector) return;
+  const node = document.querySelector(`[data-focus="${focusKey}"]`);
+  if (!node) return;
+  node.focus();
+  if (node.value !== undefined && node.setSelectionRange) {
+    try {
+      node.setSelectionRange(node.value.length, node.value.length);
+    } catch (error) {
+      /* selectionRange isn't a thing on every input type; the focus is enough */
+    }
+  }
+}
 
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many || one + 's'}`;
 
@@ -75,8 +103,12 @@ function optionCell(row, axis, resolved, raw) {
   return cell;
 }
 
-/* Send one row's correction and redraw from whatever comes back. */
-async function editRow(rowNumber, changes, feedback) {
+/* Send one row's correction and redraw from whatever comes back.
+
+   Redrawing the whole page rather than patching the cell is deliberate: one
+   change moves the price, the totals, the row's notes and sometimes a
+   sheet-level warning, and the server has already worked all of that out. */
+async function saveRow(rowNumber, changes, feedback) {
   if (feedback) feedback.textContent = 'Saving…';
   try {
     const response = await fetch(`/api/runs/${runId}/rows/${rowNumber}`, {
@@ -89,11 +121,12 @@ async function editRow(rowNumber, changes, feedback) {
     render(data.run, data.stages);
   } catch (error) {
     if (feedback) feedback.textContent = error.message;
+    else window.alert(error.message);
   }
 }
 
 const setDrink = (rowNumber, drink, feedback) =>
-  drink ? editRow(rowNumber, { drink }, feedback) : undefined;
+  drink ? saveRow(rowNumber, { drink }, feedback) : undefined;
 
 /* What to send for one axis when somebody picks a replacement. Toppings are a
    list, so the pick swaps out the one entry that didn't fit and leaves the rest
@@ -115,7 +148,7 @@ function optionFixer(row, axis, problem) {
   const choices = ((row.match && row.match.choices) || {})[axis] || [];
   const line = el('div', 'suggest-line');
 
-  const pick = (value) => editRow(
+  const pick = (value) => saveRow(
     row.row_number, changeFor(row, axis, problem.asked, value), feedback);
 
   if (problem.asked) line.append(el('span', 'why', `${problem.asked} →`));
@@ -153,6 +186,79 @@ function optionFixer(row, axis, problem) {
   return wrap;
 }
 
+/* A text box with a typeahead list behind it. Two sources, one control: the
+   drink list is 149 names and is searched on the server, where the ranking
+   knows that "ta" should reach Taro Slush; a drink's own topping list is twenty
+   names and already in the run, so the browser filters it. */
+function searchBox({ key, value, placeholder, label, list, action, onPick }) {
+  const wrap = el('div', 'suggest-line');
+  const input = keepFocus(el('input', 'drink-input'), key);
+  const datalist = el('datalist');
+  datalist.id = `list-${key}`;
+  input.setAttribute('list', datalist.id);
+  input.setAttribute('placeholder', placeholder || '');
+  input.setAttribute('aria-label', label);
+  input.setAttribute('autocomplete', 'off');
+  if (value) input.value = value;
+
+  const fill = (names) => {
+    datalist.textContent = '';
+    (names || []).forEach((name) => {
+      const option = document.createElement('option');
+      option.value = name;
+      datalist.append(option);
+    });
+  };
+
+  if (list) {
+    fill(list);
+  } else {
+    // Debounced, and last-response-wins so a slow reply for "ta" can't
+    // overwrite the results for "taro".
+    let timer = null;
+    let latest = 0;
+    input.addEventListener('input', () => {
+      const text = input.value.trim();
+      window.clearTimeout(timer);
+      if (!text) { fill([]); return; }
+      timer = window.setTimeout(async () => {
+        const mine = ++latest;
+        try {
+          const response = await fetch(`/api/drinks?q=${encodeURIComponent(text)}&limit=6`);
+          const data = await response.json();
+          if (mine === latest) fill(data.drinks || []);
+        } catch (error) {
+          /* the box still takes a typed name; the search is a convenience */
+        }
+      }, 120);
+    });
+  }
+
+  // Commit on Enter, on picking from the list, and on leaving the box — but
+  // only when the text actually changed, so tabbing through a table of these
+  // doesn't fire a save per column.
+  let sent = null;
+  const submit = () => {
+    const text = input.value.trim();
+    if (text === (value || '') || text === sent) return;
+    sent = text;
+    onPick(text);
+  };
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); submit(); }
+  });
+  input.addEventListener('change', submit);
+
+  wrap.append(input, datalist);
+  if (action) {
+    const button = el('button', 'chip apply', action);
+    button.type = 'button';
+    button.addEventListener('click', submit);
+    wrap.append(button);
+  }
+  return wrap;
+}
+
 /* The drink cell for a row we couldn't match: what they wrote, the near
    misses as one-click buttons, and the full menu behind a picker. Nothing is
    applied without someone choosing it. */
@@ -173,54 +279,199 @@ function drinkFixer(row) {
     wrap.append(line);
   }
 
-  const picker = el('div', 'suggest-line');
-  const input = el('input', 'drink-input');
-  const listId = `menu-drinks-${row.row_number}`;
-  const datalist = el('datalist');
-  datalist.id = listId;
-  input.setAttribute('list', listId);
-  input.setAttribute('placeholder',
-    suggestions.length ? 'or search the menu…' : 'search the menu…');
-  input.setAttribute('aria-label', `Choose the drink for row ${row.row_number}`);
-  input.setAttribute('autocomplete', 'off');
-
-  // Fuzzy search on the server, so the box offers a handful of near matches
-  // rather than all 135 drinks. Debounced, and last-response-wins so a slow
-  // reply for "ta" can't overwrite the results for "taro".
-  let timer = null;
-  let latest = 0;
-  input.addEventListener('input', () => {
-    const text = input.value.trim();
-    window.clearTimeout(timer);
-    if (!text) { datalist.textContent = ''; return; }
-    timer = window.setTimeout(async () => {
-      const mine = ++latest;
-      try {
-        const response = await fetch(`/api/drinks?q=${encodeURIComponent(text)}&limit=6`);
-        const data = await response.json();
-        if (mine !== latest) return;
-        datalist.textContent = '';
-        (data.drinks || []).forEach((name) => {
-          const option = document.createElement('option');
-          option.value = name;
-          datalist.append(option);
-        });
-      } catch (error) {
-        /* the box still takes a typed name; the search is a convenience */
-      }
-    }, 120);
-  });
-
-  const apply = el('button', 'chip apply', 'Use this');
-  apply.type = 'button';
-  const submit = () => setDrink(row.row_number, input.value.trim(), feedback);
-  apply.addEventListener('click', submit);
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') { event.preventDefault(); submit(); }
-  });
-  picker.append(input, apply, datalist);
-  wrap.append(picker, feedback);
+  wrap.append(searchBox({
+    key: `fix-drink-${row.row_number}`,
+    placeholder: suggestions.length ? 'or search the menu…' : 'search the menu…',
+    label: `Choose the drink for row ${row.row_number}`,
+    action: 'Use this',
+    onPick: (name) => setDrink(row.row_number, name, feedback),
+  }), feedback);
   return wrap;
+}
+
+/* --- review & edit -------------------------------------------------------- */
+/* Same table, every cell a control. What each control offers comes from the
+   matched drink, because the store's vocabulary and one drink's vocabulary are
+   very different things — a slush has no ice level at all. Until a row has a
+   drink there is nothing to ask, so it falls back to the whole store's. */
+
+function axisChoices(row, run, axis) {
+  const available = (row.match && row.match.available) || null;
+  if (available && available[axis] && available[axis].length) return available[axis];
+  if (available) return [];   // matched, and this drink genuinely hasn't got it
+  return ((run.match && run.match.vocabulary) || {})[axis] || [];
+}
+
+function selectCell(row, run, axis, current) {
+  const cell = el('td');
+  const choices = axisChoices(row, run, axis);
+  if (!choices.length) {
+    cell.append(el('span', 'default-value', '—'));
+    cell.append(el('span', 'was', 'not on this drink'));
+    return cell;
+  }
+
+  const select = keepFocus(el('select', 'cell-input'), `${row.row_number}-${axis}`);
+  select.setAttribute('aria-label', `${axis} for row ${row.row_number}`);
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = 'store default';
+  select.append(blank);
+
+  let listed = false;
+  choices.forEach((name) => {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    if (name === current) { option.selected = true; listed = true; }
+    select.append(option);
+  });
+  if (current && !listed) {
+    // The sheet asked for something this drink hasn't got. Keep it selected and
+    // named rather than snapping the dropdown to a value nobody chose.
+    const option = document.createElement('option');
+    option.value = current;
+    option.textContent = `${current} — not on this drink`;
+    option.selected = true;
+    select.append(option);
+  }
+  select.addEventListener('change', () =>
+    saveRow(row.row_number, { [axis]: select.value }));
+  cell.append(select);
+  return cell;
+}
+
+function toppingsCell(row, run) {
+  const cell = el('td');
+  const current = (row.canonical && row.canonical.toppings) || [];
+  const counts = (row.canonical && row.canonical.topping_quantities) || {};
+  // Send the count back along with the name, so editing one topping doesn't
+  // quietly turn somebody's "2x pudding" into one pudding.
+  const asText = (name) => (counts[name] > 1 ? `${counts[name]}x ${name}` : name);
+  const save = (names) => saveRow(row.row_number, { toppings: names });
+
+  if (current.length) {
+    const chips = el('div', 'chip-row');
+    current.forEach((name) => {
+      const chip = el('button', 'chip topping',
+        counts[name] > 1 ? `${name} ×${counts[name]}` : name);
+      chip.type = 'button';
+      chip.setAttribute('aria-label', `Remove ${name} from row ${row.row_number}`);
+      chip.append(el('span', 'remove', '✕'));
+      chip.addEventListener('click', () =>
+        save(current.filter((other) => other !== name).map(asText)));
+      chips.append(chip);
+    });
+    cell.append(chips);
+  }
+
+  const choices = axisChoices(row, run, 'toppings');
+  if (!choices.length) {
+    cell.append(el('span', 'was', 'no toppings on this drink'));
+    return cell;
+  }
+  cell.append(searchBox({
+    key: `${row.row_number}-toppings`,
+    placeholder: current.length ? 'add another…' : 'add a topping…',
+    label: `Add a topping to row ${row.row_number}`,
+    list: choices,
+    action: 'Add',
+    onPick: (name) => save(current.map(asText).concat([name])),
+  }));
+  return cell;
+}
+
+function quantityCell(row) {
+  const cell = el('td', 'qty');
+  const stepper = el('div', 'stepper');
+  const step = (to) => saveRow(row.row_number, { quantity: to });
+
+  const down = el('button', 'step', '−');
+  down.type = 'button';
+  down.setAttribute('aria-label', `One fewer on row ${row.row_number}`);
+  down.disabled = row.quantity <= 1;
+  down.addEventListener('click', () => step(row.quantity - 1));
+
+  const up = el('button', 'step', '+');
+  up.type = 'button';
+  up.setAttribute('aria-label', `One more on row ${row.row_number}`);
+  up.disabled = row.quantity >= 20;
+  up.addEventListener('click', () => step(row.quantity + 1));
+
+  stepper.append(down, el('span', 'count', String(row.quantity)), up);
+  cell.append(stepper);
+  return cell;
+}
+
+function nameCell(row) {
+  const cell = el('td', 'who');
+  const input = keepFocus(el('input', 'cell-input'), `${row.row_number}-person`);
+  input.setAttribute('aria-label', `Who row ${row.row_number} is for`);
+  input.setAttribute('placeholder', 'nobody');
+  input.value = row.person || '';
+  input.addEventListener('change', () => {
+    if (input.value.trim() !== (row.person || '')) {
+      saveRow(row.row_number, { person: input.value.trim() });
+    }
+  });
+  cell.append(input);
+  return cell;
+}
+
+function editableCells(tr, row, run) {
+  const item = (row.match && row.match.item) || null;
+  const canonical = row.canonical || {};
+
+  tr.append(nameCell(row));
+
+  const drink = el('td');
+  drink.append(searchBox({
+    key: `${row.row_number}-drink`,
+    value: (item && item.name) || canonical.drink || row.drink || '',
+    placeholder: 'search the menu…',
+    label: `Drink for row ${row.row_number}`,
+    action: 'Set',
+    onPick: (name) => setDrink(row.row_number, name),
+  }));
+  if (item) {
+    if (item.category) drink.append(el('span', 'was', item.category));
+  } else {
+    drink.append(el('span', 'unresolved',
+      row.drink ? `${row.drink} — not on the menu` : 'no drink yet'));
+    // The near misses are worth one click here too, not just in the read-only
+    // view — this is the screen somebody came to to fix exactly this.
+    const suggestions = (row.suggestions && row.suggestions.drink) || [];
+    if (suggestions.length) {
+      const line = el('div', 'suggest-line');
+      suggestions.slice(0, 3).forEach((name) => {
+        const button = el('button', 'chip', name);
+        button.type = 'button';
+        button.addEventListener('click', () => setDrink(row.row_number, name));
+        line.append(button);
+      });
+      drink.append(line);
+    }
+  }
+  tr.append(drink);
+
+  tr.append(selectCell(row, run, 'size', canonical.size));
+  tr.append(selectCell(row, run, 'sugar', canonical.sugar));
+  tr.append(selectCell(row, run, 'ice', canonical.ice));
+  tr.append(toppingsCell(row, run));
+  tr.append(selectCell(row, run, 'milk', canonical.milk));
+  tr.append(quantityCell(row));
+}
+
+/* Everything we did to a row, under the row. Same in both modes: while you are
+   editing is exactly when you want to see what the sheet said. */
+function appendNotes(tbody, row, worst, width) {
+  if (!row.issues || !row.issues.length) return;
+  const noteRow = el('tr', worst);
+  const cell = el('td', 'why');
+  cell.colSpan = width;
+  cell.textContent = row.issues.map((issue) => issue.message).join(' · ');
+  noteRow.append(cell);
+  tbody.append(noteRow);
 }
 
 function sourceText(source) {
@@ -298,13 +549,30 @@ function render(run, stages) {
   }
 
   /* --- the order ---------------------------------------------------------- */
-  const orderCard = card('The order');
+  const orderCard = card();
+  const header = el('div', 'card-head');
+  header.append(el('h2', null, editing ? 'Review & edit' : 'The order'));
+  const toggle = el('button', 'btn' + (editing ? ' primary' : ''),
+    editing ? 'Done editing' : 'Review & edit');
+  toggle.type = 'button';
+  toggle.addEventListener('click', () => {
+    editing = !editing;
+    focusKey = null;
+    render(run, stages);
+  });
+  header.append(toggle);
+  orderCard.append(header);
+  if (editing) {
+    orderCard.append(el('p', 'muted',
+      'Every change saves as you make it and the order re-matches, so the prices and '
+      + 'the notes below each row stay honest. What your sheet said is kept either way.'));
+  }
   const scroll = el('div', 'table-scroll');
   const table = el('table', 'orders');
   const head = el('thead');
   const headRow = el('tr');
   const columns = ['#', 'Name', 'Drink', 'Size', 'Sugar', 'Ice', 'Toppings', 'Milk', 'Qty'];
-  if (matched) columns.push('Price');
+  if (matched) columns.push('Price');   // it moves as you edit; worth watching
   columns.forEach((label) => headRow.append(el('th', null, label)));
   head.append(headRow);
   table.append(head);
@@ -323,6 +591,15 @@ function render(run, stages) {
     const name = (item && item.name) || canonical.drink;
 
     tr.append(el('td', 'row-no', String(row.row_number)));
+    if (editing) {
+      editableCells(tr, row, run);
+      if (matched) {
+        tr.append(el('td', 'qty', found.status === 'ready' ? money(found.total) : '—'));
+      }
+      tbody.append(tr);
+      appendNotes(tbody, row, worst, columns.length);
+      return;
+    }
     tr.append(el('td', 'who', row.person || '—'));
     const drink = el('td');
     if (name) {
@@ -351,15 +628,7 @@ function render(run, stages) {
       tr.append(el('td', 'qty', found.status === 'ready' ? money(found.total) : '—'));
     }
     tbody.append(tr);
-
-    if (row.issues && row.issues.length) {
-      const noteRow = el('tr', worst);
-      const cell = el('td', 'why');
-      cell.colSpan = columns.length;
-      cell.textContent = row.issues.map((issue) => issue.message).join(' · ');
-      noteRow.append(cell);
-      tbody.append(noteRow);
-    }
+    appendNotes(tbody, row, worst, columns.length);
   });
   table.append(tbody);
   scroll.append(table);
@@ -468,6 +737,8 @@ function render(run, stages) {
       go.disabled = false;
     }
   });
+
+  restoreFocus();
 }
 
 fetch(`/api/runs/${runId}`)

@@ -49,8 +49,10 @@ Both downstream stages receive one dict, the saved run:
                "name": "Large .7", "quantity": 1, "price": 0.7}
             ],
             "unit_price": 5.95, "extras_price": 0.7, "total": 6.65,
-            "unmapped": [{"axis": "toppings", "why": "..."}],
-            "choices":  {"toppings": ["Boba", "Pudding", ...]}
+            "unmapped": [{"axis": "toppings", "asked": "...", "why": "..."}],
+            "dropped":  [{"axis": "ice", "asked": "Less Ice", "why": "..."}],
+            "choices":  {"toppings": ["Boba", "Pudding", ...]},   # only what went wrong
+            "available": {"size": ["Medium", "Large"], "ice": [], ...}  # all of it
           },
           "issues":     [...],
           "ok":         true                # false = do not try to order this row

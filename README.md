@@ -40,7 +40,7 @@ up automatically. `python3 -m app.pipeline` prints what's wired.
 ## Tests
 
 ```
-python3 -m unittest discover -s tests -t .      # 197 tests
+python3 -m unittest discover -s tests -t .      # 207 tests
 python3 -m app.mapping        # does the vocabulary still match the live menu?
 ```
 
