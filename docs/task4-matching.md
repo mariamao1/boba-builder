@@ -3,7 +3,7 @@
 Turning the parsed sheet into the store's exact menu items and the exact
 modifier strings those items accept.
 
-    python3 -m unittest discover -s tests -t .   # 227 tests
+    python3 -m unittest discover -s tests -t .   # 228 tests
     python3 -m app.mapping                       # does the vocabulary still fit the menu?
     python3 -m app.matcher .runs/<id>.json       # match a saved import from the CLI
     python3 -m app.server                        # then drop data/sample-group-order.csv on the page
@@ -136,11 +136,11 @@ Three of these deserve their own note:
 
 Two ways in, one door. Anything unmappable is a button where it went wrong —
 *"Winter Melon Tea doesn't do 0% sugar"* with `100% / 70% / 50% / 30%` beside
-it. And **Review & edit**, at the top of the order, turns the whole table into
+it. And **Review & edit**, at the top of the order, turns the whole order into
 controls for the times when nothing is wrong and somebody just changed their
 mind:
 
-| Column | Control |
+| Field | Control |
 |---|---|
 | Name | text box |
 | Drink | search box, typeahead over the menu (`/api/drinks`, server-ranked) |
@@ -193,19 +193,34 @@ dropdowns keep their own, so you can click `+` three times without hunting for
 it; the text boxes ask for nothing, because they commit on blur and grabbing the
 caret back would fight the Tab that got you out of them.
 
-**Room for ten columns of controls** is the other thing the screen needs and the
-read-only table doesn't. A table that divides 100% between its columns gives
-each dropdown about 30px, and a `<select>` squeezed past its own text renders as
-an arrow and nothing else — which is how the sugar percentage and the ice level
-came to be invisible. The review table sizes to its contents instead, the card
-breaks out of the 920px reading column, and `.table-scroll` takes whatever is
-still over on a narrow screen.
+**The review screen is not a table**, and that is the other thing worth saying.
+The read-only view is text, and text shares a line out happily. Controls don't:
+a table divides its width between its columns, so nine of them came out at about
+30px each and a `<select>` squeezed past its own text renders as an arrow with
+the value clipped off — which is how the sugar percentage and the ice level came
+to be invisible. Widening the table only moved that into a sideways scroll.
+
+So each order is a block, and its fields wrap onto as many lines as the window
+needs:
+
+```
+ 5   Name [Alice Chen    ]   Drink [Taro Slush        ] [Set]      Price $7.40
+     Size [Large ▾] Sugar [50% ▾] Ice not on this drink  …  Qty [− 1 +]
+     Toppings  (Boba ✕)  [add another…] [Add]
+     · Taro Slush has no ice level choice, so "Less Ice" wasn't sent
+```
+
+Vertical space is free and horizontal space isn't, so nothing here has a floor
+the window can't meet — the whole screen fits at 320px without a scrollbar. It
+also buys every field a visible label, which a nine-column table has no room
+for.
 
 `tests/test_preview_js.py` drives the real `preview.js` through a DOM shim to
-hold all of this down — 20 tests over what each control saves, what it focuses,
-and what value it shows. It needs a JavaScript engine on the machine and skips
-when there isn't one. What it can't check is the layout itself: no browser will
-launch here (Task 1 §8), so widths are reasoned about rather than measured.
+hold all of this down — 21 tests over what each control saves, what it focuses,
+what value it shows, and that the review screen contains no table and no
+scroller. It needs a JavaScript engine on the machine and skips when there isn't
+one. What it can't check is the rendering itself: no browser will launch here
+(Task 1 §8), so widths are reasoned about rather than measured.
 
 **The match is derived on every read, never stored.** `GET /api/runs/<id>` runs
 `pipeline.enrich()`, which runs the stages marked *pure* — read-only, no network,

@@ -151,19 +151,40 @@ report(out);
         self.assertEqual(seen["8-sugar"], ["0% — not on this drink"])
         self.assertEqual(seen["7-ice"], ["Regular Ice — not on this drink"])
 
-    def test_the_review_table_is_sized_by_its_controls_not_the_column(self):
-        # Ten dropdowns sharing 100% of a reading column come out ~30px wide,
-        # which renders a <select> as an arrow and none of its value.
+    def test_the_review_screen_has_nothing_that_can_scroll_sideways(self):
+        """The reason it isn't a table.
+
+        Nine controls sharing out one line give each dropdown about 30px, which
+        renders a <select> as an arrow and none of its value; widening the table
+        only moves that into a horizontal scroll. So there is no table here, and
+        no scroller either — the fields wrap onto more lines instead.
+        """
         seen = self.drive("""
-var card = null, table = null;
+var tables = 0, scrollers = 0, blocks = 0;
 nodes.body.walk(function (n) {
-  if (!card && String(n.className).indexOf('card wide') === 0) card = n;
-  if (!table && String(n.className).indexOf('orders editing') === 0) table = n;
+  if (n.tagName === 'table') tables++;
+  if (String(n.className).indexOf('table-scroll') >= 0) scrollers++;
+  if (String(n.className).indexOf('edit-row') === 0) blocks++;
 });
-report({card: !!card, table: !!table});
+report({tables: tables, scrollers: scrollers, blocks: blocks});
 """)
-        self.assertTrue(seen["card"], "the review card should break out of the reading width")
-        self.assertTrue(seen["table"], "the review table should size to its contents")
+        self.assertEqual(seen["tables"], 0)
+        self.assertEqual(seen["scrollers"], 0)
+        self.assertEqual(seen["blocks"], 9)   # one block per order row
+
+    def test_every_field_is_labelled_and_on_the_page(self):
+        seen = self.drive("""
+var block = null;
+nodes.body.walk(function (n) {
+  if (!block && String(n.className).indexOf('edit-row') === 0) block = n;
+});
+var labels = [];
+block.walk(function (n) { if (n.className === 'field-label') labels.push(n.textContent); });
+report({labels: labels});
+""")
+        self.assertEqual(seen["labels"],
+                         ["Name", "Drink", "Price", "Size", "Sugar", "Ice", "Milk",
+                          "Qty", "Toppings"])
 
     def test_a_dropdown_saves_its_own_axis_and_keeps_its_place(self):
         seen = self.interact("""
@@ -266,13 +287,19 @@ class ReadOnlyViewTests(PreviewScriptTest):
         self.assertFalse(seen["drink"])
         self.assertFalse(seen["qty"])
 
-    def test_and_it_stays_in_the_reading_column(self):
+    def test_and_it_is_still_a_table(self):
+        # Text shares a line out happily; the read-only view is the one place a
+        # table is the right shape, and it keeps it.
         seen = self.drive("""
-var wide = 0;
-nodes.body.walk(function (n) { if (String(n.className).indexOf('wide') >= 0) wide++; });
-report({wide: wide});
+var tables = 0, blocks = 0;
+nodes.body.walk(function (n) {
+  if (n.tagName === 'table') tables++;
+  if (String(n.className).indexOf('edit-row') === 0) blocks++;
+});
+report({tables: tables, blocks: blocks});
 """)
-        self.assertEqual(seen["wide"], 0)
+        self.assertEqual(seen["tables"], 1)
+        self.assertEqual(seen["blocks"], 0)
 
     def test_the_toggle_is_there_and_says_what_it_does(self):
         seen = self.drive("""

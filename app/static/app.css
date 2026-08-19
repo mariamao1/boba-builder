@@ -262,18 +262,12 @@ select.drink-input { min-width: 9rem; flex: 0 1 auto; cursor: pointer; }
 
 /* --- review & edit -------------------------------------------------------- */
 
-/* Ten columns of controls do not fit a 920px reading column. Squeezed past its
-   own text a <select> renders as an arrow and nothing else, which is how the
-   sugar percentage and the ice level came to be invisible. Three things fix it,
-   in order: the review card breaks out of the reading width, every control has
-   a floor it can't be squeezed under, and .table-scroll takes whatever is still
-   over on a narrow screen. */
-.card.wide {
-  width: min(1280px, calc(100vw - 2rem));
-  margin-left: 50%;
-  transform: translateX(-50%);
-  padding-inline: 1rem;
-}
+/* Nine controls will not share one line. A table divides its width between its
+   columns, so each dropdown got about 30px and rendered as an arrow with the
+   value clipped off — and widening the table only moved the problem into a
+   sideways scroll. So the review screen isn't a table: it is one block per
+   order, with the fields wrapping onto as many lines as the window needs.
+   Vertical space is free; horizontal space is not. */
 
 .card-head {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
@@ -282,30 +276,64 @@ select.drink-input { min-width: 9rem; flex: 0 1 auto; cursor: pointer; }
 .card-head h2 { margin: 0; }
 .card-head .btn { padding: .35rem .8rem; font-size: .88rem; }
 
-/* Cells that are controls rather than text. */
-.cell-input {
-  font: inherit; font-size: .85rem; padding: .25rem .4rem; border-radius: 8px;
-  border: 1px solid var(--line); background: var(--card); color: inherit;
-  max-width: 11rem; width: 100%; min-width: 6rem;
+.edit-list { display: grid; gap: .75rem; margin: 1rem 0; }
+.edit-row {
+  display: grid; gap: .55rem; padding: .75rem .85rem;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
 }
-/* A dropdown has to fit its longest real value — "Regular Ice", "Soy Milk",
-   "store default" — plus the arrow, whatever the table would rather give it. */
-select.cell-input { cursor: pointer; min-width: 7.5rem; }
+.edit-row.warn { background: var(--warn-soft); border-color: var(--warn); }
+.edit-row.bad { background: var(--err-soft); border-color: var(--err); }
+
+/* One line's worth of fields, which becomes two on a narrow window. */
+.edit-line { display: flex; flex-wrap: wrap; gap: .55rem; align-items: flex-end; }
+.edit-line > .row-no { align-self: center; padding-bottom: .35rem; width: auto; }
+
+.field { display: flex; flex-direction: column; gap: .18rem; min-width: 0; }
+.field-label {
+  font-size: .68rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); font-weight: 700;
+}
+.field.grow { flex: 1 1 18rem; }
+.field-name { flex: 0 1 9rem; }
+.field-qty { flex: none; }
+.field-empty { font-size: .85rem; color: var(--muted); padding: .3rem 0; }
+.field-off .field-label { opacity: .55; }
+
+.cell-input {
+  font: inherit; font-size: .85rem; padding: .3rem .45rem; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--card); color: inherit;
+  width: 100%; min-width: 6rem;
+}
+/* Wide enough for the longest thing it can say — "Regular Ice", "store default",
+   and the start of "0% — not on this drink" — and no wider. */
+select.cell-input { cursor: pointer; min-width: 8rem; max-width: 12rem; }
 .cell-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* The read-only table divides 100% between its columns, which is right for text
-   and wrong for controls: ten of them share out to about 30px each. Here the
-   table takes the width its contents need instead, and the scroller takes the
-   overflow — so a dropdown is never narrower than the value inside it, however
-   little room the card has. */
-table.editing { width: max-content; min-width: 100%; }
-table.editing th, table.editing td { padding: .4rem .45rem; }
-table.editing .cell-input { width: auto; }
-table.editing td .drink-input { min-width: 7rem; flex: 1 1 7rem; }
-table.editing .suggest-line { gap: .25rem; }
+/* The drink and topping fields are a control plus whatever else needs saying. */
+.drink-field, .topping-field {
+  display: flex; flex-wrap: wrap; gap: .3rem; align-items: center;
+}
+.drink-field .suggest-line, .topping-field .suggest-line { flex: 1 1 11rem; }
+.drink-field .was, .topping-field .field-empty { display: inline; }
+/* 11rem plus a button is wider than a phone can give a field inside two levels
+   of padding. Nothing here may have a floor the window can't meet. */
+.drink-field .drink-input, .topping-field .drink-input { min-width: 7rem; flex: 1 1 7rem; }
+
+.edit-price {
+  margin-left: auto; display: flex; flex-direction: column; gap: .18rem;
+  text-align: right; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+
+/* Everything we did to this order, on as many lines as it takes. */
+.edit-notes {
+  list-style: none; margin: 0; padding: .5rem 0 0; display: grid; gap: .25rem;
+  border-top: 1px dashed var(--line); font-size: .82rem; color: var(--muted);
+}
+.edit-notes li.warning { color: var(--warn); }
+.edit-notes li.error { color: var(--err); }
+
 table.orders td .drink-input { min-width: 8rem; }
 
-.chip-row { display: flex; flex-wrap: wrap; gap: .25rem; margin-bottom: .3rem; }
 .chip.topping { display: inline-flex; align-items: center; gap: .35rem; }
 .chip.topping .remove { color: var(--muted); font-size: .9em; }
 .chip.topping:hover .remove, .chip.topping:focus-visible .remove { color: var(--err); }

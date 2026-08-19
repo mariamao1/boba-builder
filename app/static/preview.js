@@ -295,10 +295,18 @@ function drinkFixer(row) {
 }
 
 /* --- review & edit -------------------------------------------------------- */
-/* Same table, every cell a control. What each control offers comes from the
-   matched drink, because the store's vocabulary and one drink's vocabulary are
-   very different things — a slush has no ice level at all. Until a row has a
-   drink there is nothing to ask, so it falls back to the whole store's. */
+/* One block per order, not ten columns.
+
+   The read-only table is text and shares a line out happily. Controls don't:
+   nine of them need roughly 1200px before a dropdown stops clipping its own
+   value, and the page is 920px, so a table can only end in a sideways scroll.
+   Stacking the fields costs vertical space, which is free, and buys every
+   control a readable width at any window size.
+
+   What each control offers comes from the matched drink, because the store's
+   vocabulary and one drink's vocabulary are very different things — a slush has
+   no ice level at all. Until a row has a drink there is nothing to ask, so it
+   falls back to the whole store's. */
 
 function axisChoices(row, run, axis) {
   const available = (row.match && row.match.available) || null;
@@ -307,18 +315,28 @@ function axisChoices(row, run, axis) {
   return ((run.match && run.match.vocabulary) || {})[axis] || [];
 }
 
-function selectCell(row, run, axis, current) {
-  const cell = el('td');
+/* A labelled control. The label is a real <label> where there is a single
+   control to point it at, so clicking the word focuses the thing under it. */
+function field(labelText, control, options) {
+  const box = el('div', 'field' + ((options && options.className) ? ' ' + options.className : ''));
+  const label = el('label', 'field-label', labelText);
+  if (options && options.id) {
+    control.id = options.id;
+    label.setAttribute('for', options.id);
+  }
+  box.append(label, control);
+  return box;
+}
+
+function selectField(row, run, axis, labelText, current) {
   const choices = axisChoices(row, run, axis);
   if (!choices.length) {
-    cell.append(el('span', 'default-value', '—'));
-    cell.append(el('span', 'was', 'not on this drink'));
-    return cell;
+    const none = el('div', 'field-empty', 'not on this drink');
+    return field(labelText, none, { className: 'field-off' });
   }
 
   const key = `${row.row_number}-${axis}`;
   const select = mark(el('select', 'cell-input'), key);
-  select.setAttribute('aria-label', `${axis} for row ${row.row_number}`);
   const blank = document.createElement('option');
   blank.value = '';
   blank.textContent = 'store default';
@@ -345,12 +363,11 @@ function selectCell(row, run, axis, current) {
   // and focusing a select doesn't make it drop open the way a typeahead does.
   select.addEventListener('change', () =>
     saveRow(row.row_number, { [axis]: select.value }, null, key));
-  cell.append(select);
-  return cell;
+  return field(labelText, select, { id: `row-${key}` });
 }
 
-function toppingsCell(row, run) {
-  const cell = el('td');
+function toppingsField(row, run) {
+  const holder = el('div', 'topping-field');
   const current = (row.canonical && row.canonical.toppings) || [];
   const counts = (row.canonical && row.canonical.topping_quantities) || {};
   // Send the count back along with the name, so editing one topping doesn't
@@ -358,27 +375,24 @@ function toppingsCell(row, run) {
   const asText = (name) => (counts[name] > 1 ? `${counts[name]}x ${name}` : name);
   const save = (names) => saveRow(row.row_number, { toppings: names });
 
-  if (current.length) {
-    const chips = el('div', 'chip-row');
-    current.forEach((name) => {
-      const chip = el('button', 'chip topping',
-        counts[name] > 1 ? `${name} ×${counts[name]}` : name);
-      chip.type = 'button';
-      chip.setAttribute('aria-label', `Remove ${name} from row ${row.row_number}`);
-      chip.append(el('span', 'remove', '✕'));
-      chip.addEventListener('click', () =>
-        save(current.filter((other) => other !== name).map(asText)));
-      chips.append(chip);
-    });
-    cell.append(chips);
-  }
+  current.forEach((name) => {
+    const chip = el('button', 'chip topping',
+      counts[name] > 1 ? `${name} ×${counts[name]}` : name);
+    chip.type = 'button';
+    chip.setAttribute('aria-label', `Remove ${name} from row ${row.row_number}`);
+    chip.append(el('span', 'remove', '✕'));
+    chip.addEventListener('click', () =>
+      save(current.filter((other) => other !== name).map(asText)));
+    holder.append(chip);
+  });
 
   const choices = axisChoices(row, run, 'toppings');
   if (!choices.length) {
-    cell.append(el('span', 'was', 'no toppings on this drink'));
-    return cell;
+    holder.append(el('span', 'field-empty',
+      current.length ? '' : 'this drink doesn\'t take toppings'));
+    return field('Toppings', holder, { className: 'grow' });
   }
-  cell.append(searchBox({
+  holder.append(searchBox({
     key: `${row.row_number}-toppings`,
     placeholder: current.length ? 'add another…' : 'add a topping…',
     label: `Add a topping to row ${row.row_number}`,
@@ -386,11 +400,10 @@ function toppingsCell(row, run) {
     action: 'Add',
     onPick: (name) => save(current.map(asText).concat([name])),
   }));
-  return cell;
+  return field('Toppings', holder, { className: 'grow' });
 }
 
-function quantityCell(row) {
-  const cell = el('td', 'qty');
+function quantityField(row) {
   const stepper = el('div', 'stepper');
   // Each button keeps its own focus, and only its own: clicking + is a
   // quantity change and nothing else on the row should react to it.
@@ -411,14 +424,11 @@ function quantityCell(row) {
   up.addEventListener('click', () => step(row.quantity + 1, upKey));
 
   stepper.append(down, el('span', 'count', String(row.quantity)), up);
-  cell.append(stepper);
-  return cell;
+  return field('Qty', stepper, { className: 'field-qty' });
 }
 
-function nameCell(row) {
-  const cell = el('td', 'who');
+function nameField(row) {
   const input = mark(el('input', 'cell-input'), `${row.row_number}-person`);
-  input.setAttribute('aria-label', `Who row ${row.row_number} is for`);
   input.setAttribute('placeholder', 'nobody');
   input.value = row.person || '';
   input.addEventListener('change', () => {
@@ -426,29 +436,23 @@ function nameCell(row) {
       saveRow(row.row_number, { person: input.value.trim() });
     }
   });
-  cell.append(input);
-  return cell;
+  return field('Name', input, { id: `row-${row.row_number}-person`, className: 'field-name' });
 }
 
-function editableCells(tr, row, run) {
-  const item = (row.match && row.match.item) || null;
-  const canonical = row.canonical || {};
-
-  tr.append(nameCell(row));
-
-  const drink = el('td');
-  drink.append(searchBox({
+function drinkField(row, item) {
+  const holder = el('div', 'drink-field');
+  holder.append(searchBox({
     key: `${row.row_number}-drink`,
-    value: (item && item.name) || canonical.drink || row.drink || '',
+    value: (item && item.name) || (row.canonical || {}).drink || row.drink || '',
     placeholder: 'search the menu…',
     label: `Drink for row ${row.row_number}`,
     action: 'Set',
     onPick: (name) => setDrink(row.row_number, name),
   }));
   if (item) {
-    if (item.category) drink.append(el('span', 'was', item.category));
+    if (item.category) holder.append(el('span', 'was', item.category));
   } else {
-    drink.append(el('span', 'unresolved',
+    holder.append(el('span', 'unresolved',
       row.drink ? `${row.drink} — not on the menu` : 'no drink yet'));
     // The near misses are worth one click here too, not just in the read-only
     // view — this is the screen somebody came to to fix exactly this.
@@ -461,17 +465,53 @@ function editableCells(tr, row, run) {
         button.addEventListener('click', () => setDrink(row.row_number, name));
         line.append(button);
       });
-      drink.append(line);
+      holder.append(line);
     }
   }
-  tr.append(drink);
+  return field('Drink', holder, { className: 'grow' });
+}
 
-  tr.append(selectCell(row, run, 'size', canonical.size));
-  tr.append(selectCell(row, run, 'sugar', canonical.sugar));
-  tr.append(selectCell(row, run, 'ice', canonical.ice));
-  tr.append(toppingsCell(row, run));
-  tr.append(selectCell(row, run, 'milk', canonical.milk));
-  tr.append(quantityCell(row));
+function editCard(row, run, matched) {
+  const item = (row.match && row.match.item) || null;
+  const canonical = row.canonical || {};
+  const found = row.match || {};
+  const worst = row.ok
+    ? (row.issues.some((issue) => issue.level === 'warning') ? ' warn' : '')
+    : ' bad';
+  const card = el('div', 'edit-row' + worst);
+
+  const top = el('div', 'edit-line');
+  top.append(el('span', 'row-no', String(row.row_number)));
+  top.append(nameField(row), drinkField(row, item));
+  if (matched) {
+    const price = el('div', 'edit-price');
+    price.append(el('span', 'field-label', 'Price'));
+    price.append(el('span', null, found.status === 'ready' ? money(found.total) : '—'));
+    top.append(price);
+  }
+  card.append(top);
+
+  const options = el('div', 'edit-line');
+  options.append(selectField(row, run, 'size', 'Size', canonical.size));
+  options.append(selectField(row, run, 'sugar', 'Sugar', canonical.sugar));
+  options.append(selectField(row, run, 'ice', 'Ice', canonical.ice));
+  options.append(selectField(row, run, 'milk', 'Milk', canonical.milk));
+  options.append(quantityField(row));
+  card.append(options);
+
+  const extras = el('div', 'edit-line');
+  extras.append(toppingsField(row, run));
+  card.append(extras);
+
+  // Everything we did to this row, on as many lines as it takes.
+  if (row.issues && row.issues.length) {
+    const notes = el('ul', 'edit-notes');
+    row.issues.forEach((issue) => {
+      notes.append(el('li', issue.level, issue.message));
+    });
+    card.append(notes);
+  }
+  return card;
 }
 
 /* Everything we did to a row, under the row. Same in both modes: while you are
@@ -561,10 +601,7 @@ function render(run, stages) {
   }
 
   /* --- the order ---------------------------------------------------------- */
-  // Ten columns of controls need more room than a column of prose does, so the
-  // review screen breaks out of the reading width.
   const orderCard = card();
-  if (editing) orderCard.className = 'card wide';
   const header = el('div', 'card-head');
   header.append(el('h2', null, editing ? 'Review & edit' : 'The order'));
   const toggle = el('button', 'btn' + (editing ? ' primary' : ''),
@@ -579,14 +616,20 @@ function render(run, stages) {
   if (editing) {
     orderCard.append(el('p', 'muted',
       'Every change saves as you make it and the order re-matches, so the prices and '
-      + 'the notes below each row stay honest. What your sheet said is kept either way.'));
+      + 'the notes under each drink stay honest. What your sheet said is kept either way.'));
+    const list = el('div', 'edit-list');
+    rows.forEach((row) => list.append(editCard(row, run, matched)));
+    orderCard.append(list);
+    appendOrderFooter(orderCard, run, rows, stats, matched);
+    return renderNextStep(run, stages);
   }
+
   const scroll = el('div', 'table-scroll');
-  const table = el('table', editing ? 'orders editing' : 'orders');
+  const table = el('table', 'orders');
   const head = el('thead');
   const headRow = el('tr');
   const columns = ['#', 'Name', 'Drink', 'Size', 'Sugar', 'Ice', 'Toppings', 'Milk', 'Qty'];
-  if (matched) columns.push('Price');   // it moves as you edit; worth watching
+  if (matched) columns.push('Price');
   columns.forEach((label) => headRow.append(el('th', null, label)));
   head.append(headRow);
   table.append(head);
@@ -605,15 +648,6 @@ function render(run, stages) {
     const name = (item && item.name) || canonical.drink;
 
     tr.append(el('td', 'row-no', String(row.row_number)));
-    if (editing) {
-      editableCells(tr, row, run);
-      if (matched) {
-        tr.append(el('td', 'qty', found.status === 'ready' ? money(found.total) : '—'));
-      }
-      tbody.append(tr);
-      appendNotes(tbody, row, worst, columns.length);
-      return;
-    }
     tr.append(el('td', 'who', row.person || '—'));
     const drink = el('td');
     if (name) {
@@ -647,7 +681,12 @@ function render(run, stages) {
   table.append(tbody);
   scroll.append(table);
   orderCard.append(scroll);
+  appendOrderFooter(orderCard, run, rows, stats, matched);
+  return renderNextStep(run, stages);
+}
 
+/* The small print under the order, the same in both views. */
+function appendOrderFooter(orderCard, run, rows, stats, matched) {
   if (stats.errors) {
     orderCard.append(el('p', 'muted',
       `${plural(stats.errors, 'row')} can't be ordered and will be skipped. `
@@ -660,10 +699,12 @@ function render(run, stages) {
       'Columns we didn\'t recognise were kept with the order, not dropped.'));
   }
 
-  orderCard.append(el('p', 'muted',
-    'Values are shown as this store names them, with what your sheet said underneath. '
-    + 'A dash means no choice was made, so the store\'s default is used. Anything '
-    + 'underlined we couldn\'t find on the menu — it\'s still here, just check it.'));
+  if (!editing) {
+    orderCard.append(el('p', 'muted',
+      'Values are shown as this store names them, with what your sheet said underneath. '
+      + 'A dash means no choice was made, so the store\'s default is used. Anything '
+      + 'underlined we couldn\'t find on the menu — it\'s still here, just check it.'));
+  }
 
   if (matched) {
     const captured = matched.menu_captured ? ` captured ${matched.menu_captured}` : '';
@@ -672,8 +713,9 @@ function render(run, stages) {
       + 'Prices are that menu\'s, before tax and fees — the real total comes from the '
       + 'store when the cart is built.'));
   }
+}
 
-  /* --- next step ---------------------------------------------------------- */
+function renderNextStep(run, stages) {
   const next = card('Next: build the cart');
   const pending = (stages || []).filter((stage) => !stage.ready);
 
