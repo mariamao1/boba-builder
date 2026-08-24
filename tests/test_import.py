@@ -410,6 +410,13 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(status, 200, path)
             self.assertTrue(body, path)
 
+    def test_preview_has_a_back_button_to_the_previous_step(self):
+        status, body, _headers = self.get("/preview/abc123")
+        self.assertEqual(status, 200)
+        page = body.decode("utf-8")
+        self.assertIn('aria-label="Previous step"', page)
+        self.assertIn('href="/">← Back to import</a>', page)
+
     def test_template_download(self):
         status, body, headers = self.get("/template.csv")
         self.assertEqual(status, 200)

@@ -602,6 +602,7 @@ function render(run, stages) {
 
   /* --- the order ---------------------------------------------------------- */
   const orderCard = card();
+  orderCard.id = 'check-order';
   const header = el('div', 'card-head');
   header.append(el('h2', null, editing ? 'Review & edit' : 'The order'));
   const toggle = el('button', 'btn' + (editing ? ' primary' : ''),
@@ -722,7 +723,7 @@ function renderNextStep(run, stages) {
   const actions = el('div', 'actions');
   const go = el('button', 'btn primary', 'Build the cart');
   actions.append(go);
-  const again = el('a', 'btn ghost', 'Import a different sheet');
+  const again = el('a', 'btn ghost', '← Back to import');
   again.href = '/';
   actions.append(again);
   const download = el('a', 'btn ghost', 'Download as JSON');
@@ -765,7 +766,11 @@ function renderNextStep(run, stages) {
           link.href = handoff;
           link.rel = 'noopener';
           link.target = '_blank';
-          outcome.append(link);
+          const back = el('a', 'btn ghost', '← Back to check order');
+          back.href = '#check-order';
+          const actions = el('div', 'actions');
+          actions.append(link, back);
+          outcome.append(actions);
         } else {
           outcome.textContent = 'The pipeline ran. Reload to see the result.';
         }

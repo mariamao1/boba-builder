@@ -308,6 +308,31 @@ report({found: !!toggle});
 """)
         self.assertTrue(seen["found"])
 
+    def test_the_next_step_has_a_back_button(self):
+        seen = self.drive("""
+var back = byText('btn ghost', '← Back to import');
+report({found: !!back, href: back && back.href});
+""")
+        self.assertTrue(seen["found"])
+        self.assertEqual(seen["href"], "/")
+
+    def test_a_ready_cart_has_a_back_button_to_the_order(self):
+        seen = self.drive("""
+fetch = function () {
+  return Promise.resolve({
+    json: function () {
+      return Promise.resolve({ok: true, run: {handoff_url: 'https://example.com/cart'}});
+    },
+  });
+};
+byText('btn primary', 'Build the cart').dispatch('click');
+drainMicrotasks();
+var back = byText('btn ghost', '← Back to check order');
+report({found: !!back, href: back && back.href});
+""")
+        self.assertTrue(seen["found"])
+        self.assertEqual(seen["href"], "#check-order")
+
     def test_a_fix_it_button_still_works_without_edit_mode(self):
         # Row 8 asked for no sugar; Winter Melon Tea starts at 30%.
         seen = self.interact("byText('chip', '30%').dispatch('click'); drainMicrotasks();")

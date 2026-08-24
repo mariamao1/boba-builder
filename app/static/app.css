@@ -101,6 +101,10 @@ body {
 .steps li.on span { background: var(--accent); color: #fff; border-color: transparent; }
 .steps li.done span { background: var(--ok); color: #fff; border-color: transparent; }
 
+.back-row {
+  display: flex; align-items: center; margin: -.45rem 0 1.2rem;
+}
+
 /* --- cards -------------------------------------------------------------- */
 
 .card {
