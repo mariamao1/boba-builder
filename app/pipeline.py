@@ -84,12 +84,11 @@ and the option strings exactly as that item spells them. Everything in
 A row with `match.status != "ready"` has no line to post; it is waiting on a
 person, and the preview says what for.
 
-TO PLUG IN
+CART STAGE
 ----------
-the cart stage: add app/cart.py with  build(matched: dict) -> dict
-
-It is picked up automatically by status() and process() below; no change to this
-file or the server is needed.
+`app.cart.build(matched)` refreshes the live menu, creates the anonymous source
+cart, and adds `cart`, `manifest`, and `handoff_url`. It is the only impure stage
+and therefore runs only after the user presses Build the cart.
 """
 
 from __future__ import annotations

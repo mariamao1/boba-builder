@@ -333,6 +333,30 @@ report({found: !!back, href: back && back.href});
         self.assertTrue(seen["found"])
         self.assertEqual(seen["href"], "#check-order")
 
+    def test_the_handoff_shows_manifest_total_and_closed_store_warning(self):
+        seen = self.drive("""
+var built = Object.assign({}, reply.run, {
+  handoff_url: 'https://kft.orderexperience.net/store/menu?order_id=source',
+  cart: {
+    status: 'ready', review_ready: true, warnings: [], failed: [], skipped: [],
+    store: {state_now: {kind: 'closed', message: 'The store is closed; it next opens today at 11:00 AM.'}},
+    totals: {total: 7.29},
+    added: [{person: 'Alice', drink: 'Taro Slush', quantity: 1,
+      actual_total: 6.70, options: [{name: 'Boba', quantity: 1}], notes: ''}],
+  },
+});
+render(built, reply.stages);
+report({
+  open: !!byText('btn primary', 'Open the cart at Kung Fu Tea'),
+  person: !!byText('', 'Alice — 1× Taro Slush'),
+  price: !!byText('manifest-price', '$6.70'),
+  total: !!byText('', '$7.29'),
+  closed: !!byText('store-alert closed', 'The store is closed; it next opens today at 11:00 AM.'),
+});
+""")
+        self.assertEqual(seen, {"open": True, "person": True, "price": True,
+                                "total": True, "closed": True})
+
     def test_a_fix_it_button_still_works_without_edit_mode(self):
         # Row 8 asked for no sugar; Winter Melon Tea starts at 30%.
         seen = self.interact("byText('chip', '30%').dispatch('click'); drainMicrotasks();")

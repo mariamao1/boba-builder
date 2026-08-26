@@ -96,6 +96,75 @@ def size_label(name: str, price=None) -> str:
     return found.group("base").strip(" .") or name
 
 
+def live_snapshot(raw: dict, restaurant_id: str) -> dict:
+    """Turn the API's live menu shape into the snapshot shape used here.
+
+    The matcher deliberately reads a committed snapshot so previewing an import
+    is fast and deterministic.  Building a cart has a different job: exact
+    option names, prices and availability must be refreshed immediately before
+    anything is posted.  This adapter lets the cart stage run the same matcher
+    against that live response instead of maintaining a second set of matching
+    rules.
+    """
+
+    def option(entry: dict) -> dict:
+        return {
+            "name": entry.get("name") or "",
+            "price": entry.get("price") or 0,
+            "calories": entry.get("cal"),
+            "is_default": bool(entry.get("is_default")),
+            "is_disabled": bool(entry.get("is_disabled")),
+        }
+
+    def group(entry: dict) -> dict:
+        maximum = entry.get("max")
+        return {
+            "group_name": entry.get("name") or "",
+            # MenuGroup applies data/mapping.json's group routing, so unknown
+            # groups remain harmless and newly configured groups work here too.
+            "axis": "other",
+            "required": (entry.get("min") or 0) > 0,
+            "min": entry.get("min") or 0,
+            # The API uses zero to mean unlimited.
+            "max": maximum or None,
+            "multiselect": bool(entry.get("multiselect")),
+            "allows_quantity": bool(entry.get("quantities")),
+            "free_choices": entry.get("free_opts") or 0,
+            "options": [option(value) for value in entry.get("options") or []],
+        }
+
+    def item(entry: dict) -> dict:
+        prices = entry.get("prices") or []
+        return {
+            "id": entry.get("id") or "",
+            "name": entry.get("name") or "",
+            "category": entry.get("category") or "",
+            "description": (entry.get("description") or "").strip(),
+            "base_price": entry.get("display_price"),
+            "price_tiers": [price.get("name") for price in prices if price.get("name")],
+            "default_price_tier": next(
+                (price.get("name") for price in prices if price.get("is_default")),
+                prices[0].get("name") if prices else None,
+            ),
+            "available": bool(entry.get("can_order")) and not entry.get("is_sold_out"),
+            "sold_out": bool(entry.get("is_sold_out")),
+            "option_groups": [group(value) for value in entry.get("option_groups") or []],
+        }
+
+    return {
+        "restaurant_id": restaurant_id,
+        "restaurant_name": raw.get("name") or "",
+        "can_order_now": raw.get("can_order"),
+        "items": [item(value) for value in raw.get("menu") or []],
+    }
+
+
+def live_store_menu(raw: dict, restaurant_id: str,
+                    config: mapping.Mapping | None = None) -> "StoreMenu":
+    """A StoreMenu backed by a just-fetched API response."""
+    return StoreMenu(live_snapshot(raw, restaurant_id), config or mapping.load())
+
+
 def norm(text) -> str:
     """Comparison key: lowercase, punctuation to spaces, percent kept.
 

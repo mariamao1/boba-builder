@@ -17,7 +17,7 @@ Routes
     POST /api/runs/<run_id>/rows/<n>  edit one row: any of {"drink", "size",
                                       "sugar", "ice", "milk", "toppings",
                                       "quantity", "person"}
-    POST /api/runs/<run_id>/process   push it into the pipeline
+    POST /api/runs/<run_id>/process   build the cart and return its handoff URL
     GET  /api/health
 
 Reading a run runs the read-only stages first (`pipeline.enrich`), so the match
@@ -285,6 +285,10 @@ class Handler(BaseHTTPRequestHandler):
         except importer.RowNotFound:
             return self._error(f"there is no row {row_number} in this import",
                                HTTPStatus.NOT_FOUND)
+        # A saved handoff represents the exact rows that were posted.  Any edit
+        # makes it stale, so require an explicit rebuild before showing it again.
+        for key in ("cart", "manifest", "handoff_url"):
+            updated.pop(key, None)
         runs.save(updated, run_id)
         updated["run_id"] = run_id
         return self._json({"ok": True, "run": pipeline.enrich(updated),

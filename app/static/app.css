@@ -206,6 +206,28 @@ input[type=url], input[type=text] {
 .status.busy { color: var(--muted); }
 .status strong { display: block; margin-bottom: .15rem; color: inherit; }
 
+.cart-status { padding: 1rem; }
+.cart-status > strong { font-size: 1.05rem; }
+.store-alert {
+  margin: .75rem 0; padding: .65rem .75rem; border-radius: 8px;
+  background: var(--warn-soft); color: var(--warn);
+}
+.store-alert.unavailable, .store-alert.paused { background: var(--err-soft); color: var(--err); }
+.manifest { list-style: none; margin: .5rem 0 1rem; padding: 0; display: grid; gap: .45rem; }
+.manifest li {
+  padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--card);
+}
+.manifest-head { display: flex; justify-content: space-between; gap: 1rem; }
+.manifest-price { flex: none; font-variant-numeric: tabular-nums; }
+.cart-problems h3, .cart-result h3 { margin-bottom: .45rem; }
+.cart-total {
+  display: flex; justify-content: space-between; gap: 1rem; align-items: baseline;
+  border-top: 1px solid var(--line); padding-top: .7rem; margin-top: .8rem;
+}
+.cart-total strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.handoff-note { margin-bottom: 0; color: var(--muted); font-size: .85rem; }
+
 /* --- preview ------------------------------------------------------------- */
 
 .stats { display: flex; flex-wrap: wrap; gap: .8rem; margin: 0 0 1rem; padding: 0; list-style: none; }

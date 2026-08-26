@@ -60,7 +60,7 @@ function issueList(issues) {
   return list;
 }
 
-const money = (value) => `$${(value || 0).toFixed(2)}`;
+const money = (value) => `$${Number(value || 0).toFixed(2)}`;
 
 /* One option cell: what we resolved it to, and what the sheet said if that
    differs. A value we couldn't place is shown as typed and underlined, never
@@ -716,12 +716,111 @@ function appendOrderFooter(orderCard, run, rows, stats, matched) {
   }
 }
 
+function cartManifest(cart) {
+  const section = el('div', 'cart-result');
+  const added = cart.added || [];
+  if (added.length) {
+    section.append(el('h3', null, 'Who gets what'));
+    const list = el('ul', 'manifest');
+    added.forEach((line) => {
+      const item = el('li');
+      const heading = el('div', 'manifest-head');
+      heading.append(el('strong', null,
+        `${line.person || 'Unlabelled'} — ${line.quantity || 1}× ${line.drink}`));
+      const lineTotal = line.actual_total == null ? line.estimated_total : line.actual_total;
+      if (lineTotal != null) heading.append(el('span', 'manifest-price', money(lineTotal)));
+      item.append(heading);
+      const modifiers = (line.options || []).map((option) =>
+        `${option.name}${Number(option.quantity || 1) > 1 ? ` ×${option.quantity}` : ''}`);
+      if (modifiers.length) item.append(el('div', 'muted', modifiers.join(' · ')));
+      if (line.notes) item.append(el('div', 'muted', `Note: ${line.notes}`));
+      list.append(item);
+    });
+    section.append(list);
+  }
+  return section;
+}
+
+function cartProblems(title, entries, level) {
+  if (!entries || !entries.length) return null;
+  const section = el('div', 'cart-problems');
+  section.append(el('h3', null, title));
+  section.append(issueList(entries.map((entry) => ({
+    level,
+    row: entry.row_number,
+    message: `${entry.person || 'Unlabelled'} — ${entry.drink}: ${entry.reason}`,
+  }))));
+  return section;
+}
+
+function showCartResult(outcome, run) {
+  const cart = run.cart || null;
+  const handoff = run.handoff_url;
+  if (!cart && !handoff) return false;
+  outcome.textContent = '';
+  outcome.className = 'status cart-status' + (cart && cart.status === 'failed' ? ' err' : '');
+
+  if (!cart) {
+    outcome.append(el('strong', null, 'Your cart is ready.'));
+  } else if (cart.status === 'ready') {
+    outcome.append(el('strong', null, 'Your Kung Fu Tea cart is ready to review.'));
+  } else if (cart.status === 'partial') {
+    outcome.append(el('strong', null, 'The cart is ready, with a few drinks left out.'));
+  } else {
+    outcome.append(el('strong', null, 'The cart could not be made yet.'));
+    if (cart.error) outcome.append(el('p', null, cart.error));
+  }
+
+  const storeState = cart && cart.store && cart.store.state_now;
+  if (storeState && storeState.kind !== 'open') {
+    outcome.append(el('p', 'store-alert ' + storeState.kind, storeState.message));
+  }
+  (cart && cart.warnings || []).forEach((warning) =>
+    outcome.append(el('p', 'store-alert warning', warning)));
+
+  if (cart) {
+    outcome.append(cartManifest(cart));
+    const failed = cartProblems('Could not add', cart.failed, 'error');
+    if (failed) outcome.append(failed);
+    const skipped = cartProblems('Not mapped, so not added', cart.skipped, 'warning');
+    if (skipped) outcome.append(skipped);
+
+    const totals = cart.totals || {};
+    if (totals.total != null) {
+      const total = el('p', 'cart-total');
+      total.append(el('span', null, 'Live total from Kung Fu Tea'));
+      total.append(el('strong', null, money(totals.total)));
+      outcome.append(total);
+    }
+  }
+
+  if (handoff) {
+    const actions = el('div', 'actions');
+    const link = el('a', 'btn primary', 'Open the cart at Kung Fu Tea');
+    link.href = handoff;
+    link.rel = 'noopener noreferrer';
+    link.target = '_blank';
+    actions.append(link);
+    const back = el('a', 'btn ghost', '← Back to check order');
+    back.href = '#check-order';
+    actions.append(back);
+    outcome.append(actions);
+    outcome.append(el('p', 'handoff-note',
+      'Kung Fu Tea opens an editable copy in your browser. Review it there; '
+      + 'Boba Builder never submits the order or handles payment.'));
+  }
+  return true;
+}
+
 function renderNextStep(run, stages) {
-  const next = card('Next: build the cart');
+  const built = run.cart && run.cart.review_ready;
+  const next = card(built ? 'Cart handoff' : 'Next: build the cart');
   const pending = (stages || []).filter((stage) => !stage.ready);
 
   const actions = el('div', 'actions');
-  const go = el('button', 'btn primary', 'Build the cart');
+  const go = el('button', 'btn primary',
+    run.cart && run.cart.status === 'partial' ? 'Try the cart again' : 'Build the cart');
+  if (run.cart && run.cart.status === 'ready') go.style.display = 'none';
   actions.append(go);
   const again = el('a', 'btn ghost', '← Back to import');
   again.href = '/';
@@ -735,6 +834,7 @@ function renderNextStep(run, stages) {
   const outcome = el('div', 'status');
   outcome.style.marginTop = '1rem';
   next.append(outcome);
+  showCartResult(outcome, run);
 
   if (stages && stages.length) {
     const list = el('ul', 'stage-list');
@@ -755,25 +855,7 @@ function renderNextStep(run, stages) {
       const response = await fetch(`/api/runs/${runId}/process`, { method: 'POST' });
       const data = await response.json();
       if (data.ok) {
-        outcome.className = 'status';
-        outcome.textContent = '';
-        const handoff = data.run && data.run.handoff_url;
-        if (handoff) {
-          // Task 4 has landed: show the cart link rather than assuming a page
-          // exists to show it on.
-          outcome.append(el('strong', null, 'Your cart is ready.'));
-          const link = el('a', 'btn primary', 'Open the cart');
-          link.href = handoff;
-          link.rel = 'noopener';
-          link.target = '_blank';
-          const back = el('a', 'btn ghost', '← Back to check order');
-          back.href = '#check-order';
-          const actions = el('div', 'actions');
-          actions.append(link, back);
-          outcome.append(actions);
-        } else {
-          outcome.textContent = 'The pipeline ran. Reload to see the result.';
-        }
+        render(data.run || run, data.stages || stages);
       } else if (data.pending) {
         // Everything up to the missing stage ran; show that rather than only
         // the apology for what didn't.

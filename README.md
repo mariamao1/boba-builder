@@ -17,6 +17,7 @@ Python 3.11+, standard library only — nothing to install.
 | `app/options.py` | the user's words → the store's option set (Task 3) |
 | `app/menu.py` | the menu as objects: items and their own option lists (Task 4) |
 | `app/matcher.py` | rows → exact menu items and modifier strings (Task 4) |
+| `app/cart.py` | live menu refresh, cart build, manifest, and safe handoff (Task 5) |
 | `data/mapping.json` | every synonym and alias, as data — edit this, not the code |
 | `scripts/kft_api.py` | client for the Kung Fu Tea ordering API (Task 1) |
 | `scripts/fetch_menu.py` | capture and normalise a store's menu |
@@ -32,15 +33,16 @@ Python 3.11+, standard library only — nothing to install.
 - [x] **Task 2** — import & upload page (`docs/task2-import-page.md`)
 - [x] **Task 3** — spreadsheet import & parsing (`docs/task3-parsing.md`)
 - [x] **Task 4** — menu mapping & normalization (`docs/task4-matching.md`)
-- [ ] **next** — build the cart → `app/cart.py: build(matched)`
+- [x] **Task 5** — build the cart and hand it to the Kung Fu Tea site
+      (`docs/task5-cart-handoff.md`)
 
-That drops in as a module; `app/pipeline.py` documents the contract and picks it
-up automatically. `python3 -m app.pipeline` prints what's wired.
+`app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
+what is wired.
 
 ## Tests
 
 ```
-python3 -m unittest discover -s tests -t .      # 228 tests
+python3 -m unittest discover -s tests -t .
 python3 -m app.mapping        # does the vocabulary still match the live menu?
 ```
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -25,7 +26,23 @@ USER_AGENT = "boba-cart-builder/0.1 (+group order helper)"
 
 
 class ApiError(RuntimeError):
-    pass
+    """An API or transport failure, without leaking a cart access token."""
+
+    def __init__(self, message, status=None, retryable=False):
+        super().__init__(message)
+        self.status = status
+        self.retryable = retryable
+
+
+def _error_message(payload, fallback):
+    if isinstance(payload, dict) and "error" in payload:
+        error = payload["error"]
+        if isinstance(error, dict):
+            return error.get("display_message") or error.get("message") or fallback
+        return str(error)
+    if isinstance(payload, dict):
+        return payload.get("display_message") or payload.get("message") or fallback
+    return fallback
 
 
 def _request(path, params=None, data=None, method=None, timeout=45):
@@ -41,11 +58,34 @@ def _request(path, params=None, data=None, method=None, timeout=45):
         headers["Content-Type"] = "application/x-www-form-urlencoded"
 
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        try:
+            payload = json.loads(raw.decode()) if raw else None
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+        message = _error_message(payload, f"ordering service returned HTTP {exc.code}")
+        raise ApiError(message, status=exc.code, retryable=exc.code >= 500) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", None) or str(exc) or "network error"
+        raise ApiError(f"could not reach the ordering service: {reason}",
+                       retryable=True) from exc
+
+    # The quote endpoint currently responds 200 with an empty body after it has
+    # refreshed the order totals.  Treat that as a successful empty result and
+    # follow it with get_order(); older code tried to JSON-decode it and failed.
+    if not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw.decode())
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ApiError("ordering service returned an unreadable response") from exc
 
     if isinstance(payload, dict) and "error" in payload:
-        raise ApiError(payload["error"].get("display_message") or payload["error"])
+        raise ApiError(_error_message(payload, "ordering service rejected the request"))
     return payload
 
 
@@ -144,7 +184,11 @@ def get_order(order_id, token):
 
 
 def quote_order(order_id, token):
-    """GET api/v1/orders/{id}/quote -- totals, tax and fees before checkout."""
+    """Refresh totals before handoff.
+
+    The live endpoint may return an empty 200 response.  Call get_order after
+    this to read the refreshed subtotal, tax, fees and total.
+    """
     return _request(
         f"api/v1/orders/{order_id}/quote", params={"access_token": token}
     )

@@ -16,6 +16,7 @@ import urllib.request
 import uuid
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -534,22 +535,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("Save As", payload["error"])
 
-    def test_process_reports_the_missing_stage(self):
+    def test_process_returns_the_cart_stage_result(self):
         _status, payload = self.post_file("orders.csv", TIDY_CSV.encode())
         run_id = payload["run_id"]
         request = urllib.request.Request(
             f"{self.base}/api/runs/{run_id}/process", data=b"", method="POST")
-        try:
+        handoff = "https://kft.orderexperience.net/store/menu?order_id=source"
+
+        def fake_build(run):
+            return {**run, "handoff_url": handoff,
+                    "cart": {"status": "ready", "review_ready": True}}
+
+        with mock.patch("app.cart.build", side_effect=fake_build):
             with urllib.request.urlopen(request, timeout=10) as response:
                 code, data = response.status, json.loads(response.read())
-        except urllib.error.HTTPError as exc:
-            code, data = exc.code, json.loads(exc.read())
-        # The cart stage isn't built yet, so this is a clean "pending", not an
-        # error — and the match that did run comes back with it.
-        self.assertIn(code, (200, 202))
-        if code == 202:
-            self.assertTrue(data["pending"])
-            self.assertEqual(data["stage"]["name"], "cart")
+        self.assertEqual(code, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["run"]["handoff_url"], handoff)
 
     def test_unknown_run(self):
         with self.assertRaises(urllib.error.HTTPError) as caught:
