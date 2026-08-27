@@ -16,7 +16,7 @@ Routes
     GET  /api/drinks?q=          type-ahead search over the store's menu
     POST /api/runs/<run_id>/rows/<n>  edit one row: any of {"drink", "size",
                                       "sugar", "ice", "milk", "toppings",
-                                      "quantity", "person"}
+                                      "quantity", "person", "notes"}
     POST /api/runs/<run_id>/process   build the cart and return its handoff URL
     GET  /api/health
 

@@ -7,6 +7,9 @@ const body = document.getElementById('body');
    because every save redraws the page from the server's answer, and the mode
    has to survive that. */
 let editing = false;
+let showingCart = false;
+let currentRun = null;
+let currentStages = null;
 
 /* So does the focus, for the controls you click repeatedly — pressing + three
    times should not mean finding the button again each time.
@@ -16,6 +19,13 @@ let editing = false;
    would hand focus to whichever search box you had last touched — which then
    popped its typeahead list open. */
 let focusKey = null;
+
+/* Autosaves are serialized. Besides preventing two fast edits from arriving
+   out of order, the cart button can wait for the last blur/change save before
+   it snapshots the run. */
+let saveBarrier = Promise.resolve();
+let pendingSaves = 0;
+let lastSaveError = null;
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -109,22 +119,31 @@ function optionCell(row, axis, resolved, raw) {
    Redrawing the whole page rather than patching the cell is deliberate: one
    change moves the price, the totals, the row's notes and sometimes a
    sheet-level warning, and the server has already worked all of that out. */
-async function saveRow(rowNumber, changes, feedback, focusAfter) {
+function saveRow(rowNumber, changes, feedback, focusAfter) {
   if (feedback) feedback.textContent = 'Saving…';
-  focusKey = focusAfter || null;
-  try {
-    const response = await fetch(`/api/runs/${runId}/rows/${rowNumber}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(changes),
-    });
-    const data = await response.json();
-    if (!data.ok) throw new Error(data.error || 'that didn\'t save');
-    render(data.run, data.stages);
-  } catch (error) {
-    if (feedback) feedback.textContent = error.message;
-    else window.alert(error.message);
-  }
+  pendingSaves += 1;
+  const save = async () => {
+    focusKey = focusAfter || null;
+    lastSaveError = null;
+    try {
+      const response = await fetch(`/api/runs/${runId}/rows/${rowNumber}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(changes),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error || 'that didn\'t save');
+      render(data.run, data.stages);
+    } catch (error) {
+      lastSaveError = error;
+      if (feedback) feedback.textContent = error.message;
+      else window.alert(error.message);
+    } finally {
+      pendingSaves -= 1;
+    }
+  };
+  saveBarrier = saveBarrier.then(save, save);
+  return saveBarrier;
 }
 
 const setDrink = (rowNumber, drink, feedback) =>
@@ -439,6 +458,18 @@ function nameField(row) {
   return field('Name', input, { id: `row-${row.row_number}-person`, className: 'field-name' });
 }
 
+function notesField(row) {
+  const input = mark(el('input', 'cell-input notes-input'), `${row.row_number}-notes`);
+  input.setAttribute('placeholder', 'special instructions');
+  input.value = row.notes || '';
+  input.addEventListener('change', () => {
+    if (input.value.trim() !== (row.notes || '')) {
+      saveRow(row.row_number, { notes: input.value.trim() });
+    }
+  });
+  return field('Notes', input, { id: `row-${row.row_number}-notes`, className: 'grow' });
+}
+
 function drinkField(row, item) {
   const holder = el('div', 'drink-field');
   holder.append(searchBox({
@@ -475,9 +506,7 @@ function editCard(row, run, matched) {
   const item = (row.match && row.match.item) || null;
   const canonical = row.canonical || {};
   const found = row.match || {};
-  const worst = row.ok
-    ? (row.issues.some((issue) => issue.level === 'warning') ? ' warn' : '')
-    : ' bad';
+  const worst = rowAttentionClass(row);
   const card = el('div', 'edit-row' + worst);
 
   const top = el('div', 'edit-line');
@@ -500,7 +529,7 @@ function editCard(row, run, matched) {
   card.append(options);
 
   const extras = el('div', 'edit-line');
-  extras.append(toppingsField(row, run));
+  extras.append(toppingsField(row, run), notesField(row));
   card.append(extras);
 
   // Everything we did to this row, on as many lines as it takes.
@@ -532,11 +561,52 @@ function sourceText(source) {
   return source.filename ? `"${source.filename}"` : 'your file';
 }
 
-function render(run, stages) {
+function rowNeedsAttention(row) {
+  const found = row.match || {};
+  return !row.ok || found.status !== 'ready'
+    || ((found.unmapped || []).length > 0)
+    || ((found.dropped || []).length > 0)
+    || (row.issues || []).some((issue) => issue.level === 'warning' || issue.level === 'error');
+}
+
+function rowAttentionClass(row) {
+  if (!row.ok || ((row.match || {}).status && row.match.status !== 'ready')) return ' bad';
+  return rowNeedsAttention(row) ? ' warn' : '';
+}
+
+function updateSteps(run) {
+  const handedOff = showingCart && Boolean(run.cart || run.handoff_url);
+  const check = document.getElementById('step-check');
+  const cart = document.getElementById('step-cart');
+  const back = document.getElementById('preview-back');
+  if (check) check.className = handedOff ? 'done' : 'on';
+  if (cart) cart.className = handedOff ? 'on' : '';
+  if (back) {
+    back.href = handedOff ? '#check-order' : '/';
+    back.textContent = handedOff ? '← Back to check order' : '← Back to import';
+  }
+}
+
+const previewBack = document.getElementById('preview-back');
+if (previewBack) {
+  previewBack.addEventListener('click', (event) => {
+    if (!showingCart || !currentRun) return;
+    event.preventDefault();
+    showingCart = false;
+    render(currentRun, currentStages);
+  });
+}
+
+function render(run, stages, openCartView) {
+  currentRun = run;
+  currentStages = stages;
+  if (openCartView !== undefined) showingCart = openCartView;
   body.textContent = '';
   const stats = run.stats || {};
   const rows = run.rows || [];
   const fatal = (run.issues || []).some((issue) => issue.level === 'error');
+
+  updateSteps(run);
 
   document.getElementById('source-line').textContent = fatal
     ? `We couldn't read ${sourceText(run.source)}.`
@@ -561,18 +631,27 @@ function render(run, stages) {
     return;
   }
 
+  // Cart creation is the third step, not another panel underneath the review.
+  // Keeping it as a separate view makes the top Previous step control behave
+  // like navigation instead of an anchor that appears to do nothing.
+  if (showingCart && (run.cart || run.handoff_url)) {
+    return renderNextStep(run, stages);
+  }
+
   /* --- summary ------------------------------------------------------------ */
   const summary = card();
   const matched = run.match || null;
   const statList = el('ul', 'stats');
   const tiles = [
-    [String(stats.drinks || 0), 'drinks'],
+    [String(stats.drinks || 0), 'requested drinks'],
     [String(stats.people || 0), 'people'],
     [String(stats.rows || 0), 'rows read'],
   ];
   if (matched) {
-    tiles.push([`${matched.ready || 0}/${(run.rows || []).length}`, 'on the menu']);
-    tiles.push([money(matched.subtotal), 'before tax']);
+    tiles.push([String(matched.drinks || 0), 'mapped drinks']);
+    tiles.push([`${matched.ready || 0}/${(run.rows || []).length}`, 'rows ready']);
+    tiles.push([money(matched.subtotal), 'estimated subtotal']);
+    tiles.push([String(matched.needs_attention || 0), 'need attention']);
   } else {
     tiles.push([String(stats.warnings || 0), 'to check']);
   }
@@ -585,6 +664,12 @@ function render(run, stages) {
 
   const notes = (run.issues || []).filter((issue) => issue.level !== 'error');
   if (notes.length) summary.append(issueList(notes));
+
+  if (matched && matched.needs_attention) {
+    summary.append(el('p', 'attention-callout',
+      `${plural(matched.needs_attention, 'order')} ${matched.needs_attention === 1 ? 'needs' : 'need'} `
+      + 'a look. Highlighted rows show exactly what could not be mapped or what will be left out.'));
+  }
 
   const map = run.column_map || {};
   const mapped = Object.keys(map);
@@ -637,9 +722,7 @@ function render(run, stages) {
 
   const tbody = el('tbody');
   rows.forEach((row) => {
-    const worst = row.ok
-      ? (row.issues.some((i) => i.level === 'warning') ? 'warn' : '')
-      : 'bad';
+    const worst = rowAttentionClass(row).trim();
     const tr = el('tr', worst);
     const canonical = row.canonical || {};
     const found = row.match || {};
@@ -691,7 +774,7 @@ function appendOrderFooter(orderCard, run, rows, stats, matched) {
   if (stats.errors) {
     orderCard.append(el('p', 'muted',
       `${plural(stats.errors, 'row')} can't be ordered and will be skipped. `
-      + 'Fix them in the sheet and import again if that\'s not what you want.'));
+      + 'Use Review & edit to choose a drink or correct the row before building the cart.'));
   }
 
   const extras = rows.some((row) => Object.keys(row.extra || {}).length);
@@ -748,9 +831,58 @@ function cartProblems(title, entries, level) {
   section.append(issueList(entries.map((entry) => ({
     level,
     row: entry.row_number,
-    message: `${entry.person || 'Unlabelled'} — ${entry.drink}: ${entry.reason}`,
+    message: `${entry.person || 'Unlabelled'} — ${entry.quantity || 1}× ${entry.drink}: ${entry.reason}`,
   }))));
   return section;
+}
+
+function cartReconciliation(cart) {
+  const counts = cart.counts || {};
+  const placed = counts.added_drinks == null
+    ? (cart.added || []).reduce((total, line) => total + Number(line.quantity || 1), 0)
+    : counts.added_drinks;
+  const failed = counts.failed_drinks == null
+    ? (cart.failed || []).reduce((total, line) => total + Number(line.quantity || 1), 0)
+    : counts.failed_drinks;
+  const skipped = counts.skipped_drinks == null
+    ? (cart.skipped || []).reduce((total, line) => total + Number(line.quantity || 1), 0)
+    : counts.skipped_drinks;
+  const requested = counts.requested_drinks == null ? placed + failed + skipped : counts.requested_drinks;
+
+  const section = el('div', 'reconciliation');
+  section.append(el('h3', null, 'Reconciliation'));
+  section.append(el('p', 'muted',
+    'Compare this summary with the editable cart that opens at Kung Fu Tea before you pay.'));
+  const list = el('ul', 'reconciliation-stats');
+  [
+    [requested, 'requested'],
+    [placed, 'placed in cart'],
+    [failed + skipped, 'not placed'],
+  ].forEach(([value, label]) => {
+    const item = el('li');
+    item.append(el('b', null, String(value)), el('span', null, label));
+    list.append(item);
+  });
+  section.append(list);
+  return section;
+}
+
+function cartTotals(cart) {
+  const totals = cart.totals || {};
+  if (totals.subtotal == null && totals.tax == null && totals.total == null) return null;
+  const block = el('dl', 'cart-totals');
+  const add = (label, value, strong) => {
+    if (value == null) return;
+    const amount = el('dd', strong ? 'grand' : '');
+    amount.append(strong ? el('strong', null, money(value)) : document.createTextNode(money(value)));
+    block.append(el('dt', strong ? 'grand' : '', label), amount);
+  };
+  add('Subtotal', totals.subtotal);
+  add('Tax', totals.tax);
+  Object.keys(totals.fees || {}).forEach((name) =>
+    add(name.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()), totals.fees[name]));
+  add('Live total from Kung Fu Tea', totals.total, true);
+  return block;
 }
 
 function showCartResult(outcome, run) {
@@ -779,19 +911,15 @@ function showCartResult(outcome, run) {
     outcome.append(el('p', 'store-alert warning', warning)));
 
   if (cart) {
+    outcome.append(cartReconciliation(cart));
     outcome.append(cartManifest(cart));
     const failed = cartProblems('Could not add', cart.failed, 'error');
     if (failed) outcome.append(failed);
     const skipped = cartProblems('Not mapped, so not added', cart.skipped, 'warning');
     if (skipped) outcome.append(skipped);
 
-    const totals = cart.totals || {};
-    if (totals.total != null) {
-      const total = el('p', 'cart-total');
-      total.append(el('span', null, 'Live total from Kung Fu Tea'));
-      total.append(el('strong', null, money(totals.total)));
-      outcome.append(total);
-    }
+    const totals = cartTotals(cart);
+    if (totals) outcome.append(totals);
   }
 
   if (handoff) {
@@ -801,9 +929,6 @@ function showCartResult(outcome, run) {
     link.rel = 'noopener noreferrer';
     link.target = '_blank';
     actions.append(link);
-    const back = el('a', 'btn ghost', '← Back to check order');
-    back.href = '#check-order';
-    actions.append(back);
     outcome.append(actions);
     outcome.append(el('p', 'handoff-note',
       'Kung Fu Tea opens an editable copy in your browser. Review it there; '
@@ -814,17 +939,26 @@ function showCartResult(outcome, run) {
 
 function renderNextStep(run, stages) {
   const built = run.cart && run.cart.review_ready;
-  const next = card(built ? 'Cart handoff' : 'Next: build the cart');
+  const viewingCart = showingCart && Boolean(run.cart || run.handoff_url);
+  const next = card(viewingCart
+    ? 'Cart handoff & reconciliation'
+    : built ? 'Next: open the cart' : 'Next: build the cart');
   const pending = (stages || []).filter((stage) => !stage.ready);
 
+  const attention = run.match && run.match.needs_attention || 0;
+  if (!viewingCart && !built && attention) {
+    next.append(el('p', 'attention-callout',
+      `${plural(attention, 'order')} still ${attention === 1 ? 'needs' : 'need'} attention. `
+      + 'You can edit highlighted rows above. If you continue, anything the store cannot add '
+      + 'will be listed in the reconciliation.'));
+  }
+
   const actions = el('div', 'actions');
-  const go = el('button', 'btn primary',
-    run.cart && run.cart.status === 'partial' ? 'Try the cart again' : 'Build the cart');
-  if (run.cart && run.cart.status === 'ready') go.style.display = 'none';
+  const go = el('button', 'btn primary', built && !viewingCart
+    ? 'Continue to cart'
+    : run.cart && run.cart.status === 'partial' ? 'Try the cart again' : 'Build the cart');
+  if (viewingCart && run.cart && run.cart.status === 'ready') go.style.display = 'none';
   actions.append(go);
-  const again = el('a', 'btn ghost', '← Back to import');
-  again.href = '/';
-  actions.append(again);
   const download = el('a', 'btn ghost', 'Download as JSON');
   download.href = `/api/runs/${runId}`;
   download.setAttribute('download', `boba-order-${runId}.json`);
@@ -834,7 +968,7 @@ function renderNextStep(run, stages) {
   const outcome = el('div', 'status');
   outcome.style.marginTop = '1rem';
   next.append(outcome);
-  showCartResult(outcome, run);
+  if (viewingCart) showCartResult(outcome, run);
 
   if (stages && stages.length) {
     const list = el('ul', 'stage-list');
@@ -848,14 +982,23 @@ function renderNextStep(run, stages) {
   }
 
   go.addEventListener('click', async () => {
+    if (built && !viewingCart) {
+      showingCart = true;
+      render(run, stages);
+      return;
+    }
     go.disabled = true;
     outcome.className = 'status busy';
-    outcome.textContent = 'Handing the order to the cart builder…';
+    outcome.textContent = pendingSaves
+      ? 'Saving your last edit before building the cart…'
+      : 'Handing the order to the cart builder…';
     try {
+      await saveBarrier;
+      if (lastSaveError) throw new Error('Your last edit did not save. Fix it before building the cart.');
       const response = await fetch(`/api/runs/${runId}/process`, { method: 'POST' });
       const data = await response.json();
       if (data.ok) {
-        render(data.run || run, data.stages || stages);
+        render(data.run || run, data.stages || stages, true);
       } else if (data.pending) {
         // Everything up to the missing stage ran; show that rather than only
         // the apology for what didn't.
@@ -888,7 +1031,7 @@ fetch(`/api/runs/${runId}`)
   .then(async (response) => {
     const data = await response.json();
     if (!response.ok || !data.run) throw new Error(data.error || 'not found');
-    render(data.run, data.stages);
+    render(data.run, data.stages, Boolean(data.run.cart || data.run.handoff_url));
   })
   .catch((error) => {
     body.textContent = '';

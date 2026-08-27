@@ -498,6 +498,33 @@ class ServerTests(unittest.TestCase):
         self.assertEqual([r["canonical"]["drink"] for r in saved["rows"]],
                          ["Taro Slush", "Matcha Milk"])
 
+    def test_notes_can_be_corrected_in_the_preview(self):
+        _status, payload = self.post_file(
+            "orders.csv", b"Name,Drink,Notes\nAlice,Taro Slush,old note\n")
+        run_id = payload["run_id"]
+
+        status, out = self.post_json(
+            f"/api/runs/{run_id}/rows/2", {"notes": "no straw"})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(out["run"]["rows"][0]["notes"], "no straw")
+        self.assertIn("the sheet said \"old note\"",
+                      " ".join(issue["message"] for issue in out["run"]["rows"][0]["issues"]))
+
+    def test_editing_size_overrides_the_original_temperature_column(self):
+        _status, payload = self.post_file(
+            "orders.csv", b"Name,Drink,Temperature\nAlice,Taro Slush,Hot\n")
+        run_id = payload["run_id"]
+
+        status, out = self.post_json(f"/api/runs/{run_id}/rows/2", {"size": ""})
+
+        self.assertEqual(status, 200)
+        row = out["run"]["rows"][0]
+        self.assertEqual(row["temperature"], "")
+        self.assertEqual(row["canonical"]["size"], "")
+        self.assertIn("the sheet said \"Hot\"",
+                      " ".join(issue["message"] for issue in row["issues"]))
+
     def test_drink_search_returns_a_short_list(self):
         status, body, _headers = self.get("/api/drinks?q=taro")
         self.assertEqual(status, 200)

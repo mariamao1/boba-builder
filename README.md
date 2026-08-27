@@ -13,7 +13,7 @@ Python 3.11+, standard library only — nothing to install.
 
 | | |
 | --- | --- |
-| `app/` | the web app: import & upload page, preview, JSON API (Task 2) |
+| `app/` | the web app: import, editable preview, reconciliation, JSON API |
 | `app/options.py` | the user's words → the store's option set (Task 3) |
 | `app/menu.py` | the menu as objects: items and their own option lists (Task 4) |
 | `app/matcher.py` | rows → exact menu items and modifier strings (Task 4) |
@@ -35,6 +35,8 @@ Python 3.11+, standard library only — nothing to install.
 - [x] **Task 4** — menu mapping & normalization (`docs/task4-matching.md`)
 - [x] **Task 5** — build the cart and hand it to the Kung Fu Tea site
       (`docs/task5-cart-handoff.md`)
+- [x] **Task 6** — in-app order preview, correction, and cart reconciliation
+      (`docs/task6-preview-reconciliation.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.
@@ -46,7 +48,7 @@ python3 -m unittest discover -s tests -t .
 python3 -m app.mapping        # does the vocabulary still match the live menu?
 ```
 
-21 of those drive the preview page's own JavaScript through a small DOM shim, to
+27 of those drive the preview page's own JavaScript through a small DOM shim, to
 catch the wiring bugs Python can't see. They need a JavaScript engine on the
 machine — macOS ships one — and skip themselves when there isn't one.
 

@@ -184,7 +184,7 @@ report({labels: labels});
 """)
         self.assertEqual(seen["labels"],
                          ["Name", "Drink", "Price", "Size", "Sugar", "Ice", "Milk",
-                          "Qty", "Toppings"])
+                          "Qty", "Toppings", "Notes"])
 
     def test_a_dropdown_saves_its_own_axis_and_keeps_its_place(self):
         seen = self.interact("""
@@ -278,6 +278,46 @@ drainMicrotasks();
         self.assertEqual([entry["body"] for entry in seen["posted"]], [{"person": "Kim"}])
         self.assertEqual(seen["focused"], [])   # the tab that got them out stands
 
+    def test_editing_notes_saves_them_with_the_order(self):
+        seen = self.interact("""
+var box = byFocus('5-notes');
+box.value = 'no straw';
+box.dispatch('change');
+drainMicrotasks();
+""")
+        self.assertEqual([entry["body"] for entry in seen["posted"]], [{"notes": "no straw"}])
+
+
+class SaveOrderingTests(PreviewScriptTest):
+    def test_cart_build_waits_for_the_last_autosave(self):
+        seen = self.drive("""
+var calls = [], releaseSave = null;
+fetch = function (url, init) {
+  calls.push(url);
+  if (url.indexOf('/rows/') >= 0) {
+    return new Promise(function (resolve) {
+      releaseSave = function () {
+        resolve({json: function () { return Promise.resolve(reply); }});
+      };
+    });
+  }
+  return Promise.resolve({json: function () { return Promise.resolve(reply); }});
+};
+var note = byFocus('5-notes');
+note.value = 'no straw';
+note.dispatch('change');
+byText('btn primary', 'Build the cart').dispatch('click');
+drainMicrotasks();
+var before = calls.slice();
+releaseSave();
+drainMicrotasks();
+report({before: before, after: calls});
+""")
+        self.assertEqual(len(seen["before"]), 1)
+        self.assertIn("/rows/5", seen["before"][0])
+        self.assertEqual(len(seen["after"]), 2)
+        self.assertTrue(seen["after"][1].endswith("/process"))
+
 
 class ReadOnlyViewTests(PreviewScriptTest):
     editing = False
@@ -308,15 +348,17 @@ report({found: !!toggle});
 """)
         self.assertTrue(seen["found"])
 
-    def test_the_next_step_has_a_back_button(self):
+    def test_the_top_back_button_returns_to_import_while_checking(self):
         seen = self.drive("""
-var back = byText('btn ghost', '← Back to import');
-report({found: !!back, href: back && back.href});
+var back = document.getElementById('preview-back');
+report({text: back.textContent, href: back.href,
+        duplicate: !!byText('btn ghost', '← Back to import')});
 """)
-        self.assertTrue(seen["found"])
+        self.assertEqual(seen["text"], "← Back to import")
         self.assertEqual(seen["href"], "/")
+        self.assertFalse(seen["duplicate"])
 
-    def test_a_ready_cart_has_a_back_button_to_the_order(self):
+    def test_the_cart_back_button_returns_to_the_order_screen(self):
         seen = self.drive("""
 fetch = function () {
   return Promise.resolve({
@@ -327,11 +369,21 @@ fetch = function () {
 };
 byText('btn primary', 'Build the cart').dispatch('click');
 drainMicrotasks();
-var back = byText('btn ghost', '← Back to check order');
-report({found: !!back, href: back && back.href});
+var back = document.getElementById('preview-back');
+var cartText = back.textContent;
+back.dispatch('click');
+var tables = 0;
+nodes.body.walk(function (n) { if (n.tagName === 'table') tables++; });
+report({cartText: cartText, reviewText: back.textContent, href: back.href,
+        checkStep: document.getElementById('step-check').className,
+        tables: tables, duplicate: !!byText('btn ghost', '← Back to check order')});
 """)
-        self.assertTrue(seen["found"])
-        self.assertEqual(seen["href"], "#check-order")
+        self.assertEqual(seen["cartText"], "← Back to check order")
+        self.assertEqual(seen["reviewText"], "← Back to import")
+        self.assertEqual(seen["href"], "/")
+        self.assertEqual(seen["checkStep"], "on")
+        self.assertEqual(seen["tables"], 1)
+        self.assertFalse(seen["duplicate"])
 
     def test_the_handoff_shows_manifest_total_and_closed_store_warning(self):
         seen = self.drive("""
@@ -345,7 +397,7 @@ var built = Object.assign({}, reply.run, {
       actual_total: 6.70, options: [{name: 'Boba', quantity: 1}], notes: ''}],
   },
 });
-render(built, reply.stages);
+render(built, reply.stages, true);
 report({
   open: !!byText('btn primary', 'Open the cart at Kung Fu Tea'),
   person: !!byText('', 'Alice — 1× Taro Slush'),
@@ -356,6 +408,33 @@ report({
 """)
         self.assertEqual(seen, {"open": True, "person": True, "price": True,
                                 "total": True, "closed": True})
+
+    def test_the_handoff_reconciles_requested_placed_and_missing_drinks(self):
+        seen = self.drive("""
+var built = Object.assign({}, reply.run, {
+  handoff_url: 'https://kft.orderexperience.net/store/menu?order_id=source',
+  cart: {
+    status: 'partial', review_ready: true, warnings: [],
+    counts: {requested_drinks: 4, added_drinks: 2, failed_drinks: 1, skipped_drinks: 1},
+    store: {state_now: {kind: 'open', message: 'Open.'}}, totals: {},
+    added: [{person: 'Alice', drink: 'Taro Slush', quantity: 2, options: []}],
+    failed: [{row_number: 3, person: 'Bob', drink: 'Milk Tea', quantity: 1,
+      reason: 'sold out'}],
+    skipped: [{row_number: 4, person: 'Chen', drink: 'Unknown', quantity: 1,
+      reason: 'not mapped'}],
+  },
+});
+render(built, reply.stages, true);
+report({
+  heading: !!byText('', 'Reconciliation'),
+  requested: !!byText('', '4'),
+  placed: !!byText('', '2'),
+  failed: !!byText('', 'Row 3: Bob — 1× Milk Tea: sold out'),
+  skipped: !!byText('', 'Row 4: Chen — 1× Unknown: not mapped'),
+});
+""")
+        self.assertEqual(seen, {"heading": True, "requested": True, "placed": True,
+                                "failed": True, "skipped": True})
 
     def test_a_fix_it_button_still_works_without_edit_mode(self):
         # Row 8 asked for no sugar; Winter Melon Tea starts at 30%.

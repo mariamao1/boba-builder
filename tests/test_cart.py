@@ -196,6 +196,96 @@ class CartBuildTests(unittest.TestCase):
         self.assertIn("handoff_url", built)
         self.assertEqual(len(api.add_calls), 2)
 
+    def test_reconciliation_counts_every_requested_drink(self):
+        run = matched(
+            "Name,Drink,Size,Qty\n"
+            "Alice,Taro Slush,Medium,2\n"
+            "Bob,Thai Tea Milk Cap,Medium,3\n"
+            "Chen,Blueberry Explosion,Medium,1\n"
+        )
+        items = [raw_item("Taro Slush"), raw_item("Thai Tea Milk Cap")]
+        api = FakeApi(items, fail_ids={items[1]["id"]})
+
+        built = cart.build(run, api=api)
+
+        self.assertEqual(built["cart"]["counts"], {
+            "rows_total": 3,
+            "requested_drinks": 6,
+            "mapped_rows": 2,
+            "mapped_drinks": 5,
+            "added_rows": 1,
+            "added_drinks": 2,
+            "failed_rows": 1,
+            "failed_drinks": 3,
+            "skipped_rows": 1,
+            "skipped_drinks": 1,
+            "not_added_drinks": 4,
+        })
+
+    def test_final_cart_readback_moves_a_missing_line_to_failed(self):
+        run = matched(
+            "Name,Drink,Size\n"
+            "Alice,Taro Slush,Medium\n"
+            "Bob,Thai Tea Milk Cap,Medium\n"
+        )
+
+        class MissingLastLineApi(FakeApi):
+            def get_order(self, order_id, token):
+                order = super().get_order(order_id, token)
+                order["items"] = order["items"][:-1]
+                return order
+
+        api = MissingLastLineApi([raw_item("Taro Slush"), raw_item("Thai Tea Milk Cap")])
+
+        built = cart.build(run, api=api)
+
+        self.assertEqual(built["cart"]["status"], "partial")
+        self.assertEqual([entry["person"] for entry in built["cart"]["added"]], ["Alice"])
+        self.assertEqual(built["cart"]["failed"][0]["person"], "Bob")
+        self.assertEqual(built["cart"]["failed"][0]["code"], "verification_failed")
+        self.assertEqual(built["cart"]["counts"]["not_added_drinks"], 1)
+
+    def test_cart_creation_failure_names_every_affected_order(self):
+        run = matched(
+            "Name,Drink,Size\n"
+            "Alice,Taro Slush,Medium\n"
+            "Bob,Thai Tea Milk Cap,Medium\n"
+        )
+
+        class CreateFailureApi(FakeApi):
+            def create_order(self, restaurant_id, order_type="takeout"):
+                raise kft_api.ApiError("ordering is temporarily unavailable")
+
+        api = CreateFailureApi([raw_item("Taro Slush"), raw_item("Thai Tea Milk Cap")])
+
+        built = cart.build(run, api=api)
+
+        self.assertEqual(built["cart"]["status"], "failed")
+        self.assertEqual([entry["person"] for entry in built["cart"]["failed"]],
+                         ["Alice", "Bob"])
+        self.assertTrue(all(entry["code"] == "cart_creation_failed"
+                            for entry in built["cart"]["failed"]))
+        self.assertEqual(built["cart"]["counts"]["not_added_drinks"], 2)
+
+    def test_menu_load_failure_still_reconciles_every_order(self):
+        run = matched(
+            "Name,Drink,Size,Qty\n"
+            "Alice,Taro Slush,Medium,2\n"
+            "Bob,Blueberry Explosion,Medium,1\n"
+        )
+
+        class MenuFailureApi(FakeApi):
+            def get_menu(self, restaurant_id):
+                raise kft_api.ApiError("menu service unavailable")
+
+        built = cart.build(run, api=MenuFailureApi([]))
+
+        self.assertEqual(built["cart"]["counts"]["requested_drinks"], 3)
+        self.assertEqual(built["cart"]["counts"]["failed_drinks"], 2)
+        self.assertEqual(built["cart"]["counts"]["skipped_drinks"], 1)
+        self.assertEqual(built["cart"]["failed"][0]["code"], "menu_unavailable")
+        self.assertIn("menu service unavailable", built["cart"]["failed"][0]["reason"])
+
     def test_store_that_disabled_pickup_is_not_given_a_handoff(self):
         run = matched("Name,Drink,Size\nAlice,Taro Slush,Medium\n")
         api = FakeApi([raw_item("Taro Slush")], accepting=False)

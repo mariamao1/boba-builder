@@ -419,7 +419,7 @@ def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
         result["match"] = {"ready": 0, "needs_drink": 0, "skipped": len(rows)}
         return result
 
-    ready = attention = 0
+    ready = 0
     drinks = 0
     subtotal = 0.0
     for row in run.get("rows") or []:
@@ -433,11 +433,19 @@ def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
             ready += 1
             drinks += found["quantity"]
             subtotal += found["total"]
-            if found["unmapped"]:
-                attention += 1
-        elif found["status"] == NEEDS_DRINK:
-            attention += 1
         rows.append(row)
+
+    # A preview flag means "look at this row", not only "the drink name did not
+    # match". Include parser warnings and requests this particular drink cannot
+    # take, even when the remaining line is still safe to add to a cart.
+    attention = sum(
+        1 for row in rows
+        if (row.get("match") or {}).get("status") != READY
+        or any(issue.get("level") in ("warning", "error")
+               for issue in row.get("issues") or [])
+        or bool((row.get("match") or {}).get("unmapped"))
+        or bool((row.get("match") or {}).get("dropped"))
+    )
 
     unmatched = sum(1 for row in rows if row["match"]["status"] == NEEDS_DRINK)
     if unmatched:

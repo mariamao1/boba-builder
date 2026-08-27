@@ -213,11 +213,11 @@ class RowNotFound(KeyError):
 #: itself. The source, the column mapping and everything the sheet said stay as
 #: they were — a correction is recorded alongside the original, never over it.
 EDITABLE_FIELDS = frozenset({"drink", "size", "sugar", "ice", "milk", "toppings",
-                             "quantity", "person"})
+                             "quantity", "person", "notes"})
 
 _FIELD_LABELS = {"drink": "drink", "size": "size", "sugar": "sugar level",
                  "ice": "ice level", "milk": "milk", "toppings": "toppings",
-                 "quantity": "quantity", "person": "name"}
+                 "quantity": "quantity", "person": "name", "notes": "notes"}
 
 MAX_QUANTITY = 20  # same ceiling the importer puts on a typo'd quantity column
 
@@ -278,7 +278,14 @@ def apply_row_edit(run: dict, row_number: int, changes: dict) -> dict:
             # Every other field can legitimately be cleared back to the store
             # default. A row with no drink is not a row.
             raise ValueError("pick a drink")
+        # A separate Hot/Iced column resolves onto the same store axis as Size.
+        # Once the user edits Size in the app it is the authoritative choice;
+        # otherwise clearing the dropdown would unexpectedly resurrect "Hot"
+        # from the original temperature column instead of using the default.
         previous = getattr(target, field)
+        if field == "size" and target.temperature:
+            previous = previous or target.temperature
+            target.temperature = ""
         setattr(target, field, chosen)
 
         # Drop an earlier correction of the same field, and whatever the import

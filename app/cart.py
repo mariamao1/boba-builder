@@ -219,6 +219,60 @@ def _find_store(records, restaurant_id: str) -> dict:
     return {}
 
 
+def _prebuild_failure(matched: dict, error: str, code: str, *,
+                      store: dict | None = None,
+                      warnings: list[str] | None = None) -> dict:
+    """Account for every row when no cart can be attempted at all."""
+    rows = matched.get("rows") or []
+    failed: list[dict] = []
+    skipped: list[dict] = []
+    for row in rows:
+        entry = _row_stub(row)
+        if (row.get("match") or {}).get("status") == matcher.READY:
+            entry.update({"code": code, "reason": error})
+            failed.append(entry)
+        else:
+            entry.update({"code": "not_mapped", "reason": _skip_reason(row)})
+            skipped.append(entry)
+
+    requested = sum(_row_stub(row)["quantity"] for row in rows)
+    mapped = [row for row in rows
+              if (row.get("match") or {}).get("status") == matcher.READY]
+    failed_drinks = sum(entry["quantity"] for entry in failed)
+    skipped_drinks = sum(entry["quantity"] for entry in skipped)
+    result = dict(matched)
+    result["cart"] = {
+        "status": "failed",
+        "review_ready": False,
+        "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        "input_fingerprint": _fingerprint(matched),
+        "source_order_id": None,
+        "error": error,
+        "store": store or {},
+        "counts": {
+            "rows_total": len(rows),
+            "requested_drinks": requested,
+            "mapped_rows": len(mapped),
+            "mapped_drinks": sum(_row_stub(row)["quantity"] for row in mapped),
+            "added_rows": 0,
+            "added_drinks": 0,
+            "failed_rows": len(failed),
+            "failed_drinks": failed_drinks,
+            "skipped_rows": len(skipped),
+            "skipped_drinks": skipped_drinks,
+            "not_added_drinks": failed_drinks + skipped_drinks,
+        },
+        "added": [],
+        "failed": failed,
+        "skipped": skipped,
+        "warnings": warnings or [],
+        "totals": _totals({}),
+    }
+    result["manifest"] = []
+    result.pop("handoff_url", None)
+    return result
+
+
 def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
     """Build all currently matched rows and return a safe review handoff.
 
@@ -230,13 +284,8 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
     restaurant_id = (matched.get("match") or {}).get("restaurant_id")
     result = dict(matched)
     if not restaurant_id:
-        result["cart"] = {
-            "status": "failed", "review_ready": False,
-            "error": "No Kung Fu Tea store is attached to this order.",
-            "added": [], "failed": [], "skipped": [], "warnings": [],
-        }
-        result.pop("handoff_url", None)
-        return result
+        return _prebuild_failure(
+            matched, "No Kung Fu Tea store is attached to this order.", "no_store")
 
     warnings: list[str] = []
     try:
@@ -251,14 +300,11 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
     try:
         raw_menu = _read(api.get_menu, restaurant_id)
     except Exception as exc:
-        result["cart"] = {
-            "status": "failed", "review_ready": False,
-            "error": f"The live menu could not be loaded: {_message(exc)}",
-            "store": {"restaurant_id": restaurant_id, "name": store.get("name")},
-            "added": [], "failed": [], "skipped": [], "warnings": warnings,
-        }
-        result.pop("handoff_url", None)
-        return result
+        error = f"The live menu could not be loaded: {_message(exc)}"
+        return _prebuild_failure(
+            matched, error, "menu_unavailable",
+            store={"restaurant_id": restaurant_id, "name": store.get("name")},
+            warnings=warnings)
 
     live_store = menu_module.live_store_menu(raw_menu, restaurant_id)
     live_matched = matcher.match(matched, store=live_store)
@@ -323,19 +369,35 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
             entry["code"] = "not_mapped"
             skipped.append(entry)
 
+    live_rows = live_matched.get("rows") or []
     counts = {
-        "rows_total": len(live_matched.get("rows") or []),
+        "rows_total": len(live_rows),
+        "requested_drinks": sum(_row_stub(row)["quantity"] for row in live_rows),
         "mapped_rows": len(eligible),
         "mapped_drinks": sum(_row_stub(row)["quantity"] for row in eligible),
         "added_rows": 0,
         "added_drinks": 0,
         "failed_rows": len(failed),
+        "failed_drinks": sum(entry["quantity"] for entry in failed),
         "skipped_rows": len(skipped),
+        "skipped_drinks": sum(entry["quantity"] for entry in skipped),
+        "not_added_drinks": 0,
     }
+
+    def refresh_counts(manifest: list[dict] | None = None) -> None:
+        placed = manifest or []
+        counts["added_rows"] = len(placed)
+        counts["added_drinks"] = sum(entry["quantity"] for entry in placed)
+        counts["failed_rows"] = len(failed)
+        counts["failed_drinks"] = sum(entry["quantity"] for entry in failed)
+        counts["skipped_rows"] = len(skipped)
+        counts["skipped_drinks"] = sum(entry["quantity"] for entry in skipped)
+        counts["not_added_drinks"] = counts["failed_drinks"] + counts["skipped_drinks"]
 
     def finish(status: str, error: str | None = None, order_id: str | None = None,
                added: list[dict] | None = None, order: dict | None = None) -> dict:
         manifest = added or []
+        refresh_counts(manifest)
         cart = {
             "status": status,
             "review_ready": bool(order_id and manifest),
@@ -375,7 +437,12 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
         created = api.create_order(restaurant_id, ORDER_TYPE)
         order_id, token = created["order_id"], created["token"]
     except Exception as exc:
-        return finish("failed", f"The cart could not be created: {_message(exc)}")
+        reason = f"The cart could not be created: {_message(exc)}"
+        for row in eligible:
+            entry = _row_stub(row)
+            entry.update({"code": "cart_creation_failed", "reason": reason})
+            failed.append(entry)
+        return finish("failed", reason)
 
     added_manifest: list[dict] = []
     for row in eligible:
@@ -395,14 +462,11 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
             )
             entry = _manifest_entry(row, added)
             added_manifest.append(entry)
-            counts["added_rows"] += 1
-            counts["added_drinks"] += entry["quantity"]
         except Exception as exc:
             entry = _row_stub(row)
             entry.update({"code": "add_failed", "reason": _message(exc)})
             failed.append(entry)
 
-    counts["failed_rows"] = len(failed)
     if not added_manifest:
         return finish("failed", "Kung Fu Tea rejected every mapped drink.", order_id)
 
@@ -420,6 +484,34 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
         # its totals could not be verified instead of discarding the cart.
         order = {}
         warnings.append(f"The cart was built, but its totals could not be verified: {_message(exc)}")
+
+    # Reconcile successful add responses with the final server-side cart. An
+    # acknowledged line that is absent from the read-back must not be presented
+    # as placed; the user needs that discrepancy called out before checkout.
+    order_items = order.get("items") if isinstance(order, dict) else None
+    if isinstance(order_items, list):
+        confirmed_ids = {str(item.get("id")) for item in order_items if item.get("id")}
+        missing = [entry for entry in added_manifest
+                   if entry.get("cart_item_id")
+                   and str(entry["cart_item_id"]) not in confirmed_ids]
+        if missing:
+            missing_ids = {entry["cart_item_id"] for entry in missing}
+            added_manifest = [entry for entry in added_manifest
+                              if entry.get("cart_item_id") not in missing_ids]
+            for entry in missing:
+                failed.append({
+                    "row_number": entry["row_number"],
+                    "person": entry["person"],
+                    "drink": entry["drink"],
+                    "quantity": entry["quantity"],
+                    "code": "verification_failed",
+                    "reason": "the item was acknowledged but was missing from the final cart",
+                })
+            warnings.append("The final cart did not contain every acknowledged item.")
+
+    if not added_manifest:
+        return finish("failed", "No drinks could be confirmed in the final cart.",
+                      order_id, order=order)
 
     status = "ready" if not failed else "partial"
     return finish(status, order_id=order_id, added=added_manifest, order=order)

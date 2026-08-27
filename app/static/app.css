@@ -221,11 +221,25 @@ input[type=url], input[type=text] {
 .manifest-head { display: flex; justify-content: space-between; gap: 1rem; }
 .manifest-price { flex: none; font-variant-numeric: tabular-nums; }
 .cart-problems h3, .cart-result h3 { margin-bottom: .45rem; }
-.cart-total {
-  display: flex; justify-content: space-between; gap: 1rem; align-items: baseline;
-  border-top: 1px solid var(--line); padding-top: .7rem; margin-top: .8rem;
+.reconciliation { margin-top: .8rem; }
+.reconciliation > p { margin: 0 0 .65rem; }
+.reconciliation-stats {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem;
+  list-style: none; margin: 0 0 1rem; padding: 0;
 }
-.cart-total strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.reconciliation-stats li {
+  padding: .55rem .65rem; border-radius: 9px; background: var(--card);
+  border: 1px solid var(--line);
+}
+.reconciliation-stats b { display: block; font-size: 1.25rem; line-height: 1.1; }
+.reconciliation-stats span { color: var(--muted); font-size: .78rem; }
+.cart-totals {
+  display: grid; grid-template-columns: 1fr auto; gap: .25rem 1rem;
+  border-top: 1px solid var(--line); padding-top: .7rem; margin: .8rem 0 0;
+}
+.cart-totals dt, .cart-totals dd { margin: 0; }
+.cart-totals dd { text-align: right; font-variant-numeric: tabular-nums; }
+.cart-totals .grand { font-size: 1.05rem; font-weight: 700; margin-top: .25rem; }
 .handoff-note { margin-bottom: 0; color: var(--muted); font-size: .85rem; }
 
 /* --- preview ------------------------------------------------------------- */
@@ -236,6 +250,11 @@ input[type=url], input[type=text] {
 }
 .stats b { display: block; font-size: 1.4rem; line-height: 1.1; letter-spacing: -.02em; }
 .stats span { font-size: .8rem; color: var(--muted); }
+
+.attention-callout {
+  margin: .8rem 0; padding: .65rem .75rem; border-left: 3px solid var(--warn);
+  border-radius: 0 8px 8px 0; background: var(--warn-soft); color: var(--warn);
+}
 
 .issues { list-style: none; padding: 0; margin: 0 0 1rem; display: grid; gap: .4rem; }
 .issues li {
@@ -333,6 +352,7 @@ select.drink-input { min-width: 9rem; flex: 0 1 auto; cursor: pointer; }
 /* Wide enough for the longest thing it can say — "Regular Ice", "store default",
    and the start of "0% — not on this drink" — and no wider. */
 select.cell-input { cursor: pointer; min-width: 8rem; max-width: 12rem; }
+.notes-input { min-width: min(24rem, 100%); }
 .cell-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* The drink and topping fields are a control plus whatever else needs saying. */
@@ -386,3 +406,7 @@ table.orders td .drink-input { min-width: 8rem; }
 .stage-list li.ready .dot { background: var(--ok); }
 .stage-list li.ready { color: var(--ink); }
 .stage-list li { color: var(--muted); }
+
+@media (max-width: 520px) {
+  .reconciliation-stats { grid-template-columns: 1fr; }
+}

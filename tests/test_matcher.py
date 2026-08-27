@@ -291,6 +291,15 @@ class SugarAndIceMatchTests(unittest.TestCase):
         self.assertIn("no ice level choice", note["message"])
         self.assertEqual(row["match"]["unmapped"], [])
 
+    def test_a_dropped_request_counts_as_needing_attention(self):
+        result = matcher.match(run_for([{
+            "drink": "Taro Slush",
+            "ice": "Less Ice",
+            "canonical": {"drink": "Taro Slush", "ice": "Less Ice"},
+        }]), store())
+
+        self.assertEqual(result["match"]["needs_attention"], 1)
+
     def test_required_sugar_and_ice_are_filled_in(self):
         row = one({"drink": "Osmanthus Oolong", "canonical": {"drink": "Osmanthus Oolong"}})
         sent = {o["axis"]: o["name"] for o in row["match"]["options"]}
