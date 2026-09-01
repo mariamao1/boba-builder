@@ -46,10 +46,13 @@ from a later room read.
 
 ### Read a room
 
-`GET /api/group-orders/<room_id>` or `GET /group-order/<room_id>`
+`GET /api/group-orders/<room_id>`
 
 The session contains its order lines plus totals for orders, drinks, and people,
 including a `by_person` rollup. Secret hashes and raw tokens are never included.
+
+`GET /group-order/<room_id>` is the participant-facing HTML page built in Task
+9. It reads this API in the browser.
 
 ### Add an order
 

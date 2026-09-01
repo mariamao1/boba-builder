@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from app import group_orders, server
+from app import group_orders, menu, server
 
 
 ORDER = {
@@ -158,6 +158,29 @@ class GroupOrderStoreTests(unittest.TestCase):
             group_orders.get(closed["id"], now=now)
 
 
+class ParticipantMenuTests(unittest.TestCase):
+    def test_menu_contains_only_real_per_drink_choices(self):
+        payload = menu.participant_menu()
+        self.assertEqual(payload["item_count"], len(payload["items"]))
+        self.assertGreater(payload["item_count"], 100)
+
+        taro = next(item for item in payload["items"] if item["name"] == "Taro Slush")
+        groups = {group["axis"]: group for group in taro["option_groups"]}
+        self.assertEqual([option["label"] for option in groups["size"]["options"]],
+                         ["Medium", "Large"])
+        self.assertIn("50%", [option["label"] for option in groups["sugar"]["options"]])
+        self.assertIn("Boba", [option["label"] for option in groups["toppings"]["options"]])
+        self.assertNotIn("ice", groups)  # Taro Slush genuinely has no ice choice.
+
+    def test_menu_names_are_unique_and_categories_are_populated(self):
+        payload = menu.participant_menu()
+        names = [item["name"] for item in payload["items"]]
+        self.assertEqual(len(names), len(set(names)))
+        self.assertIn("Slush", payload["categories"])
+        self.assertTrue(all(item["category"] in payload["categories"]
+                            for item in payload["items"] if item["category"]))
+
+
 class GroupOrderHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -216,7 +239,15 @@ class GroupOrderHttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(updated["session"]["summary"]["drinks"], 2)
 
-        status, public = self.request("GET", created["share_url"])
+        with urllib.request.urlopen(self.base + created["share_url"], timeout=10) as response:
+            page = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertIn("text/html", response.headers.get("Content-Type", ""))
+        self.assertIn("Add your drink", page)
+        self.assertIn("Group drinks", page)
+        self.assertIn("/static/group-order.js", page)
+
+        status, public = self.request("GET", created["api_url"])
         self.assertEqual(status, 200)
         self.assertEqual(public["session"]["orders"][0]["person"], "Alice")
         self.assertNotIn("token", json.dumps(public))
@@ -248,6 +279,15 @@ class GroupOrderHttpTests(unittest.TestCase):
             "GET", "/api/group-orders/aaaaaaaaaaaaaaaaaaaaaaaa")
         self.assertEqual(status, 404)
         self.assertEqual(missing["code"], "room_not_found")
+
+    def test_participant_menu_endpoint_has_item_specific_options(self):
+        status, response = self.request("GET", "/api/menu")
+        self.assertEqual(status, 200)
+        taro = next(item for item in response["menu"]["items"]
+                    if item["name"] == "Taro Slush")
+        size = next(group for group in taro["option_groups"] if group["axis"] == "size")
+        self.assertEqual([choice["label"] for choice in size["options"]],
+                         ["Medium", "Large"])
 
 
 if __name__ == "__main__":

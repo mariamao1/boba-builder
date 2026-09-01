@@ -40,6 +40,8 @@ Python 3.11+, standard library only — nothing to install.
       (`docs/task6-preview-reconciliation.md`)
 - [x] **Task 8** — anonymous shared group-order sessions
       (`docs/task8-group-order-sessions.md`)
+- [x] **Task 9** — mobile participant order entry using the captured menu
+      (`docs/task9-participant-order-entry.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.

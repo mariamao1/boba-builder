@@ -14,6 +14,8 @@ Routes
     POST /api/import             file upload or {"sheet_url": ...} -> run_id
     GET  /api/runs/<run_id>      the parsed order, matched to the menu, as JSON
     GET  /api/drinks?q=          type-ahead search over the store's menu
+    GET  /api/menu               participant menu with per-drink option groups
+    GET  /group-order/<room_id>  participant-facing order entry page
     POST /api/runs/<run_id>/rows/<n>  edit one row: any of {"drink", "size",
                                       "sugar", "ice", "milk", "toppings",
                                       "quantity", "person", "notes"}
@@ -42,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import group_orders, importer, options, pipeline, runs, sheets, template
+from . import group_orders, importer, menu, options, pipeline, runs, sheets, template
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = importer.MAX_UPLOAD_BYTES + 512 * 1024  # payload plus multipart framing
@@ -207,6 +209,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/menu-hints":
             return self._json(template.menu_hints())
 
+        if path == "/api/menu":
+            return self._json({"ok": True, "menu": menu.participant_menu()},
+                              extra={"Cache-Control": "no-cache"})
+
         if path == "/api/drinks":
             # Type-ahead for the "pick a drink" box on the preview page.
             query = parse_qs(parts.query)
@@ -226,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_group_order(match.group(1))
         match = re.fullmatch(rf"/group-order/({GROUP_ORDER_ID_PATTERN})", path)
         if match:
-            return self._get_group_order(match.group(1))
+            return self._serve_static("group-order.html")
 
         self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain; charset=utf-8")
 

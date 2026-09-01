@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#faf6f1">
+<title>Add your drink — Boba Builder</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/group-order.css">
+</head>
+<body class="participant-page">
+<a class="skip" href="#order-form">Skip to your order</a>
+
+<header class="masthead participant-head">
+  <div class="wrap participant-wrap">
+    <p class="eyebrow">Group order</p>
+    <h1><span class="cup" aria-hidden="true"></span> <span id="room-title">Add your boba</span></h1>
+    <p class="tagline" id="room-subtitle">Loading the order…</p>
+  </div>
+</header>
+
+<main class="wrap participant-wrap">
+  <section class="room-strip" id="room-strip" aria-live="polite">
+    <span class="status-dot" aria-hidden="true"></span>
+    <span>Loading group order…</span>
+  </section>
+
+  <section class="card order-card" id="order-card">
+    <form id="order-form" novalidate>
+      <div class="form-heading">
+        <div>
+          <p class="step-label">Your drink</p>
+          <h2 id="form-title">Choose something good</h2>
+        </div>
+        <button class="btn ghost compact hidden" id="cancel-edit" type="button">Cancel edit</button>
+      </div>
+
+      <label class="participant-field" for="person-name">
+        <span>Your name</span>
+        <input id="person-name" name="person" type="text" maxlength="80"
+               autocomplete="name" placeholder="What should the organizer call you?" required>
+      </label>
+
+      <div id="drink-picker">
+        <div class="picker-heading">
+          <label for="drink-search">Pick a drink</label>
+          <span id="menu-count" class="muted"></span>
+        </div>
+        <input id="drink-search" class="menu-search" type="search"
+               autocomplete="off" placeholder="Search the menu" aria-controls="drink-list">
+        <div class="category-list" id="category-list" aria-label="Menu categories"></div>
+        <div class="drink-list" id="drink-list" aria-live="polite"></div>
+        <p class="menu-more muted" id="menu-more"></p>
+      </div>
+
+      <div id="drink-editor" class="hidden">
+        <article class="selected-drink">
+          <div>
+            <p class="selected-kicker">Selected drink</p>
+            <h3 id="selected-name"></h3>
+            <p id="selected-description" class="muted selected-description"></p>
+          </div>
+          <div class="selected-side">
+            <strong id="selected-price"></strong>
+            <button class="text-button" id="change-drink" type="button">Change</button>
+          </div>
+        </article>
+
+        <div id="modifier-groups" class="modifier-groups"></div>
+
+        <div class="order-extras">
+          <label class="participant-field quantity-field" for="quantity">
+            <span>Quantity</span>
+            <input id="quantity" name="quantity" type="number" inputmode="numeric"
+                   min="1" max="20" value="1" required>
+          </label>
+          <label class="participant-field notes-field" for="notes">
+            <span>Notes <small>(optional)</small></span>
+            <textarea id="notes" name="notes" rows="2" maxlength="500"
+                      placeholder="Anything the organizer should know?"></textarea>
+          </label>
+        </div>
+
+        <div class="submit-row">
+          <div>
+            <span class="muted estimate-label">Estimated item total</span>
+            <strong id="estimated-total">—</strong>
+          </div>
+          <button class="btn primary submit-drink" id="submit-drink" type="submit">Add my drink</button>
+        </div>
+      </div>
+      <div class="status" id="form-status" role="status" aria-live="polite"></div>
+    </form>
+  </section>
+
+  <section class="card group-orders-card" id="group-orders-card">
+    <div class="group-orders-heading">
+      <div>
+        <p class="step-label">Everyone's order</p>
+        <h2>Group drinks</h2>
+      </div>
+      <div class="group-order-tools">
+        <span class="count-badge" id="group-order-count">0</span>
+        <button class="text-button" id="refresh-orders" type="button">Refresh</button>
+      </div>
+    </div>
+    <div id="group-orders" aria-live="polite">
+      <p class="muted">Submitted drinks will appear here.</p>
+    </div>
+  </section>
+
+  <p class="footnote participant-footnote">Edit controls appear only for drinks added in this browser. Nothing is ordered or paid for here.</p>
+</main>
+
+<script src="/static/group-order.js"></script>
+</body>
+</html>

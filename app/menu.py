@@ -530,7 +530,98 @@ def store_menu() -> StoreMenu:
     return StoreMenu(snapshot(), mapping.load())
 
 
+@functools.lru_cache(maxsize=1)
+def participant_menu() -> dict:
+    """The real, per-drink menu used by the shared order-entry page.
+
+    This is intentionally different from ``template.menu_hints()``.  Hints are
+    a store-wide vocabulary for interpreting free text; participants need the
+    exact choices available on the one drink they selected.  Values are the
+    canonical labels the rest of Boba Builder understands (``Large``, ``50%``)
+    while ``store_value`` preserves the ordering site's literal when it differs.
+    """
+    data = snapshot()
+    store = store_menu()
+    if not data or not store:
+        return {
+            "store": None,
+            "restaurant_id": "",
+            "captured": None,
+            "item_count": 0,
+            "categories": [],
+            "items": [],
+        }
+
+    # A few captured menus contain duplicate display names.  Use the same
+    # deterministic item StoreMenu.find() would use, but retain menu/category
+    # order so the participant page feels like the real menu rather than an
+    # alphabetized data dump.
+    chosen: dict[str, MenuItem] = {}
+    for item in sorted(store.drinks, key=lambda candidate: candidate.id):
+        chosen.setdefault(norm(item.name), item)
+
+    axes = {"size", "sugar", "ice", "toppings", "milk", "temperature"}
+    items = []
+    seen_names: set[str] = set()
+    for item in store.drinks:
+        key = norm(item.name)
+        if key in seen_names or chosen.get(key) is not item:
+            continue
+        seen_names.add(key)
+
+        groups = []
+        for index, group in enumerate(item.groups):
+            if group.axis not in axes or not group.options:
+                continue
+            option_rows = []
+            for option in group.options:
+                option_rows.append({
+                    "label": group.label_for(option["name"]),
+                    "store_value": option["name"],
+                    "price": option.get("price") or 0,
+                    "is_default": bool(option.get("is_default")),
+                })
+            groups.append({
+                "key": f"group-{index}",
+                "name": group.group_name,
+                "axis": group.axis,
+                "required": group.required,
+                "min": group.min,
+                "max": group.max,
+                "multiselect": group.multiselect,
+                "allows_quantity": group.allows_quantity,
+                "options": option_rows,
+            })
+
+        items.append({
+            "id": item.id,
+            "name": item.name,
+            "category": item.category,
+            "description": item.description,
+            "price": item.base_price,
+            "option_groups": groups,
+        })
+
+    category_order = [entry.get("name") for entry in data.get("category_order") or []]
+    categories = []
+    available_categories = {item["category"] for item in items if item["category"]}
+    for name in category_order + sorted(available_categories):
+        if name and name in available_categories and name not in categories:
+            categories.append(name)
+
+    captured = captured_at()
+    return {
+        "store": store.store,
+        "restaurant_id": store.restaurant_id,
+        "captured": captured.isoformat() if captured else None,
+        "item_count": len(items),
+        "categories": categories,
+        "items": items,
+    }
+
+
 def reload() -> StoreMenu:
     snapshot.cache_clear()
     store_menu.cache_clear()
+    participant_menu.cache_clear()
     return store_menu()
