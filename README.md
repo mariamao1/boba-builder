@@ -18,6 +18,7 @@ Python 3.11+, standard library only — nothing to install.
 | `app/menu.py` | the menu as objects: items and their own option lists (Task 4) |
 | `app/matcher.py` | rows → exact menu items and modifier strings (Task 4) |
 | `app/cart.py` | live menu refresh, cart build, manifest, and safe handoff (Task 5) |
+| `app/group_orders.py` | persistent shared rooms, order aggregation, and lifecycle (Task 8) |
 | `data/mapping.json` | every synonym and alias, as data — edit this, not the code |
 | `scripts/kft_api.py` | client for the Kung Fu Tea ordering API (Task 1) |
 | `scripts/fetch_menu.py` | capture and normalise a store's menu |
@@ -37,6 +38,8 @@ Python 3.11+, standard library only — nothing to install.
       (`docs/task5-cart-handoff.md`)
 - [x] **Task 6** — in-app order preview, correction, and cart reconciliation
       (`docs/task6-preview-reconciliation.md`)
+- [x] **Task 8** — anonymous shared group-order sessions
+      (`docs/task8-group-order-sessions.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.

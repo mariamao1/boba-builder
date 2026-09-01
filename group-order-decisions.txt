@@ -1,0 +1,55 @@
+Group Order Session Decisions
+=============================
+
+Shareable room
+--------------
+- Each session gets a URL-safe, cryptographically random public ID with roughly
+  144 bits of randomness.
+- The share link is /group-order/<session_id>. Anyone with this hard-to-guess
+  link can view the room and add orders while it is open; no account is needed.
+- Creating a room also returns a separate organizer token. Only its SHA-256
+  hash is persisted.
+
+Persistence
+-----------
+- Sessions are stored as one JSON file per room under .group-orders/.
+- Writes use a temporary file followed by an atomic replace.
+- Per-room locks prevent concurrent requests in the threaded server from
+  overwriting one another.
+- This lightweight store is intended for the current single-process server. A
+  multi-process deployment should use a transactional database.
+
+Orders and aggregation
+----------------------
+- Each submitted drink is stored as an order line containing the person's
+  display name, drink, modifiers, quantity, notes, and timestamps.
+- Room reads return every order line plus an aggregate summary: order-line
+  count, total drink quantity, distinct person count, and totals by person.
+- Names are grouped case-insensitively for aggregation, while the first entered
+  spelling is retained for display.
+- A room accepts at most 200 order lines. Quantities are limited to 1-20, and
+  text fields have bounded lengths.
+
+Associating orders with people
+------------------------------
+- Every order stores the contributor's display name and a random public
+  participant ID.
+- Every new order also returns a separate private edit token. Its hash is
+  stored with the order; the raw token is never returned by later room reads.
+- The edit token allows that contributor to edit or remove the order while the
+  room is open. The organizer token can manage any order.
+- Display names are labels, not authentication. Possession of the edit token
+  is the proof that someone may change an order.
+
+Lifecycle
+---------
+- Sessions start open and accept additions, edits, and removals.
+- They expire after 24 hours by default. The creator may choose a positive
+  duration up to seven days.
+- The organizer may lock a room, making it read-only, and may reopen it later.
+- The organizer may close a room permanently. Closed rooms cannot be reopened.
+- Expiration is also terminal. Expired rooms remain readable during the
+  retention period but reject writes.
+- Closed and expired rooms remain available for review. Rooms more than seven
+  days past expiration are deleted, and at most 200 recent closed/expired room
+  files are retained. Live rooms are never removed by the archive-size cap.

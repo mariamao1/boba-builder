@@ -1,4 +1,4 @@
-"""The Boba Builder web server — Task 2.
+"""The Boba Builder web server.
 
     python3 -m app.server            # http://127.0.0.1:8000
     python3 -m app.server --port 9000 --host 0.0.0.0
@@ -18,6 +18,11 @@ Routes
                                       "sugar", "ice", "milk", "toppings",
                                       "quantity", "person", "notes"}
     POST /api/runs/<run_id>/process   build the cart and return its handoff URL
+    POST /api/group-orders            create an anonymous shared order room
+    GET  /api/group-orders/<room_id>  retrieve its aggregated orders
+    POST /api/group-orders/<room_id>/orders  add an order while the room is open
+    PATCH/DELETE .../orders/<order_id>       manage an order with its edit token
+    POST .../<lock|reopen|close>              organizer lifecycle controls
     GET  /api/health
 
 Reading a run runs the read-only stages first (`pipeline.enrich`), so the match
@@ -37,10 +42,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import importer, options, pipeline, runs, sheets, template
+from . import group_orders, importer, options, pipeline, runs, sheets, template
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = importer.MAX_UPLOAD_BYTES + 512 * 1024  # payload plus multipart framing
+MAX_JSON_BODY = 64 * 1024
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -52,6 +58,8 @@ CONTENT_TYPES = {
 }
 
 RUN_ID_RE = re.compile(r"^[0-9a-f]{4,32}$")
+GROUP_ORDER_ID_PATTERN = r"[A-Za-z0-9_-]{20,64}"
+GROUP_ORDER_LINE_ID_PATTERN = r"[A-Za-z0-9_-]{16,64}"
 
 
 # --- multipart/form-data ----------------------------------------------------
@@ -87,7 +95,7 @@ def parse_multipart(body: bytes, content_type: str) -> dict[str, dict]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "BobaBuilder/0.2"
+    server_version = "BobaBuilder/0.3"
     protocol_version = "HTTP/1.1"
 
     # --- plumbing -----------------------------------------------------------
@@ -107,9 +115,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _json(self, payload: dict, status=HTTPStatus.OK):
+    def _json(self, payload: dict, status=HTTPStatus.OK, extra: dict | None = None):
         body = json.dumps(payload, default=str).encode("utf-8")
-        self._send(status, body, "application/json; charset=utf-8")
+        self._send(status, body, "application/json; charset=utf-8", extra)
 
     def _error(self, message: str, status=HTTPStatus.BAD_REQUEST, **extra):
         self._json({"ok": False, "error": message, **extra}, status)
@@ -122,6 +130,43 @@ class Handler(BaseHTTPRequestHandler):
         if length > MAX_BODY:
             raise ValueError(f"upload is larger than {MAX_BODY // (1024 * 1024)} MB")
         return self.rfile.read(length) if length else b""
+
+    def _read_json(self) -> dict:
+        content_type = self.headers.get("Content-Type", "")
+        if content_type and not content_type.startswith("application/json"):
+            raise ValueError("request body must be JSON")
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError as exc:
+            raise ValueError("invalid content length") from exc
+        if length > MAX_JSON_BODY:
+            raise ValueError("JSON request is larger than 64 KB")
+        try:
+            payload = json.loads(self._read_body() or b"{}")
+        except json.JSONDecodeError as exc:
+            raise ValueError("could not read that request") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be a JSON object")
+        return payload
+
+    def _bearer_token(self) -> str | None:
+        authorization = self.headers.get("Authorization", "")
+        if authorization.lower().startswith("bearer "):
+            return authorization[7:].strip() or None
+        return None
+
+    def _organizer_token(self, payload: dict | None = None) -> str | None:
+        return (self.headers.get("X-Organizer-Token") or self._bearer_token()
+                or (payload or {}).get("organizer_token"))
+
+    def _order_token(self, payload: dict | None = None) -> str | None:
+        return (self.headers.get("X-Order-Token") or self._bearer_token()
+                or (payload or {}).get("order_token"))
+
+    def _group_error(self, exc: group_orders.GroupOrderError):
+        body = json.dumps({"ok": False, "error": str(exc), "code": exc.code}).encode("utf-8")
+        return self._send(exc.status, body, "application/json; charset=utf-8",
+                          {"Cache-Control": "no-store"})
 
     def _serve_static(self, name: str):
         target = (STATIC_DIR / name).resolve()
@@ -176,6 +221,13 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             return self._get_run(match.group(1))
 
+        match = re.fullmatch(rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})", path)
+        if match:
+            return self._get_group_order(match.group(1))
+        match = re.fullmatch(rf"/group-order/({GROUP_ORDER_ID_PATTERN})", path)
+        if match:
+            return self._get_group_order(match.group(1))
+
         self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain; charset=utf-8")
 
     def _get_run(self, run_id: str):
@@ -191,6 +243,14 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True, "run": pipeline.enrich(run),
                            "stages": pipeline.status()})
 
+    def _get_group_order(self, room_id: str):
+        try:
+            room = group_orders.get(room_id)
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        return self._json({"ok": True, "session": room},
+                          extra={"Cache-Control": "no-store"})
+
     # --- POST ---------------------------------------------------------------
 
     def do_POST(self):
@@ -198,6 +258,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/import":
                 return self._import()
+            if path == "/api/group-orders":
+                return self._create_group_order()
+            match = re.fullmatch(
+                rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/orders", path)
+            if match:
+                return self._add_group_order(match.group(1))
+            match = re.fullmatch(
+                rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/(lock|reopen|close)", path)
+            if match:
+                status = {"lock": "locked", "reopen": "open", "close": "closed"}[match.group(2)]
+                return self._set_group_order_status(match.group(1), status)
             match = re.fullmatch(r"/api/runs/([0-9a-f]+)/process", path)
             if match:
                 return self._process(match.group(1))
@@ -212,6 +283,93 @@ class Handler(BaseHTTPRequestHandler):
                                "file instead of the link",
                                HTTPStatus.INTERNAL_SERVER_ERROR)
         self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain; charset=utf-8")
+
+    def do_PATCH(self):
+        path = unquote(urlparse(self.path).path)
+        match = re.fullmatch(
+            rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/orders/({GROUP_ORDER_LINE_ID_PATTERN})",
+            path,
+        )
+        if not match:
+            return self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain; charset=utf-8")
+        try:
+            payload = self._read_json()
+            order, room = group_orders.update_order(
+                match.group(1), match.group(2), payload,
+                order_token=self._order_token(payload),
+                organizer_token=self._organizer_token(payload),
+            )
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        except ValueError as exc:
+            return self._error(str(exc))
+        return self._json({"ok": True, "order": order, "session": room},
+                          extra={"Cache-Control": "no-store"})
+
+    def do_DELETE(self):
+        path = unquote(urlparse(self.path).path)
+        match = re.fullmatch(
+            rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/orders/({GROUP_ORDER_LINE_ID_PATTERN})",
+            path,
+        )
+        if not match:
+            return self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain; charset=utf-8")
+        try:
+            room = group_orders.delete_order(
+                match.group(1), match.group(2),
+                order_token=self._order_token(),
+                organizer_token=self._organizer_token(),
+            )
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        return self._json({"ok": True, "session": room},
+                          extra={"Cache-Control": "no-store"})
+
+    def _create_group_order(self):
+        try:
+            payload = self._read_json()
+            room, organizer_token = group_orders.create(
+                title=payload.get("title", ""),
+                organizer_name=payload.get("organizer_name", ""),
+                expires_in_hours=payload.get(
+                    "expires_in_hours", group_orders.DEFAULT_TTL_HOURS),
+            )
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        except ValueError as exc:
+            return self._error(str(exc))
+        room_id = room["id"]
+        return self._json({
+            "ok": True,
+            "session_id": room_id,
+            "organizer_token": organizer_token,
+            "share_url": f"/group-order/{room_id}",
+            "api_url": f"/api/group-orders/{room_id}",
+            "session": room,
+        }, HTTPStatus.CREATED, {"Cache-Control": "no-store"})
+
+    def _add_group_order(self, room_id: str):
+        try:
+            order, order_token, room = group_orders.add_order(room_id, self._read_json())
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        except ValueError as exc:
+            return self._error(str(exc))
+        return self._json({"ok": True, "order": order, "order_token": order_token,
+                           "session": room}, HTTPStatus.CREATED,
+                          {"Cache-Control": "no-store"})
+
+    def _set_group_order_status(self, room_id: str, status: str):
+        try:
+            payload = self._read_json()
+            room = group_orders.set_status(
+                room_id, status, self._organizer_token(payload))
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        except ValueError as exc:
+            return self._error(str(exc))
+        return self._json({"ok": True, "session": room},
+                          extra={"Cache-Control": "no-store"})
 
     def _import(self):
         content_type = self.headers.get("Content-Type", "")
