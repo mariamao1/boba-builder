@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from app import group_orders, menu, server
+from app import group_orders, menu, runs, server
 
 
 ORDER = {
@@ -31,10 +31,13 @@ class GroupOrderStoreTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.original_dir = group_orders.SESSION_DIR
-        group_orders.SESSION_DIR = Path(self.temporary.name)
+        self.original_run_dir = runs.RUN_DIR
+        group_orders.SESSION_DIR = Path(self.temporary.name) / "group-orders"
+        runs.RUN_DIR = Path(self.temporary.name) / "runs"
 
     def tearDown(self):
         group_orders.SESSION_DIR = self.original_dir
+        runs.RUN_DIR = self.original_run_dir
         self.temporary.cleanup()
 
     def test_create_persists_a_public_room_without_persisting_the_secret(self):
@@ -89,6 +92,51 @@ class GroupOrderStoreTests(unittest.TestCase):
         aggregate = group_orders.delete_order(
             room["id"], order["id"], organizer_token=organizer_token)
         self.assertEqual(aggregate["orders"], [])
+
+    def test_organizer_can_moderate_while_participants_are_locked_out(self):
+        room, organizer_token = group_orders.create()
+        order, edit_token, _room = group_orders.add_order(room["id"], ORDER)
+        group_orders.set_status(room["id"], "locked", organizer_token)
+
+        with self.assertRaises(group_orders.RoomNotOpen):
+            group_orders.delete_order(room["id"], order["id"], order_token=edit_token)
+
+        aggregate = group_orders.delete_order(
+            room["id"], order["id"], organizer_token=organizer_token)
+        self.assertEqual(aggregate["status"], "locked")
+        self.assertEqual(aggregate["orders"], [])
+
+    def test_finalize_creates_one_normal_pipeline_run_and_closes_the_room(self):
+        room, organizer_token = group_orders.create(title="Launch tea")
+        group_orders.add_order(room["id"], {**ORDER, "quantity": 2})
+        group_orders.add_order(room["id"], {
+            **ORDER, "person": "Bob", "drink": "Matcha Milk", "toppings": [],
+        })
+
+        finalized, run_id = group_orders.finalize(room["id"], organizer_token)
+        saved = runs.load(run_id)
+
+        self.assertEqual(finalized["status"], "closed")
+        self.assertEqual(finalized["preview_url"], f"/preview/{run_id}")
+        self.assertEqual(saved["source"]["kind"], "group_order")
+        self.assertEqual(saved["source"]["session_id"], room["id"])
+        self.assertEqual(saved["stats"]["drinks"], 3)
+        self.assertEqual([row["person"] for row in saved["rows"]], ["Alice", "Bob"])
+        self.assertEqual(saved["rows"][0]["canonical"]["drink"], "Taro Slush")
+        self.assertEqual(saved["rows"][0]["toppings"], ["Boba"])
+        self.assertEqual(saved["rows"][0]["canonical"]["toppings"], ["Boba"])
+        self.assertNotIn("preview_url", group_orders.get(room["id"]))
+
+        repeated, repeated_id = group_orders.finalize(room["id"], organizer_token)
+        self.assertEqual(repeated_id, run_id)
+        self.assertEqual(repeated["preview_url"], finalized["preview_url"])
+
+    def test_finalize_requires_an_order_and_the_organizer_token(self):
+        room, organizer_token = group_orders.create()
+        with self.assertRaises(group_orders.Forbidden):
+            group_orders.finalize(room["id"], "wrong")
+        with self.assertRaises(group_orders.EmptyRoom):
+            group_orders.finalize(room["id"], organizer_token)
 
     def test_lock_reopen_close_and_expiry_are_enforced(self):
         now = dt.datetime(2026, 8, 31, 12, 0, tzinfo=dt.timezone.utc)
@@ -186,7 +234,9 @@ class GroupOrderHttpTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory()
         cls.original_dir = group_orders.SESSION_DIR
-        group_orders.SESSION_DIR = Path(cls.temporary.name)
+        cls.original_run_dir = runs.RUN_DIR
+        group_orders.SESSION_DIR = Path(cls.temporary.name) / "group-orders"
+        runs.RUN_DIR = Path(cls.temporary.name) / "runs"
         cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
@@ -197,6 +247,7 @@ class GroupOrderHttpTests(unittest.TestCase):
         cls.httpd.shutdown()
         cls.httpd.server_close()
         group_orders.SESSION_DIR = cls.original_dir
+        runs.RUN_DIR = cls.original_run_dir
         cls.temporary.cleanup()
 
     def request(self, method: str, path: str, payload=None, headers=None):
@@ -220,6 +271,16 @@ class GroupOrderHttpTests(unittest.TestCase):
         room_id = created["session_id"]
         organizer_token = created["organizer_token"]
         self.assertEqual(created["share_url"], f"/group-order/{room_id}")
+        self.assertEqual(
+            created["organizer_url"],
+            f"/group-order/{room_id}/organizer#token={organizer_token}",
+        )
+
+        with urllib.request.urlopen(
+                self.base + f"/group-order/{room_id}/organizer", timeout=10) as response:
+            organizer_page = response.read().decode("utf-8")
+        self.assertIn("Organizer dashboard", organizer_page)
+        self.assertIn("/static/group-order-organizer.js", organizer_page)
 
         status, added = self.request(
             "POST", f"/api/group-orders/{room_id}/orders", ORDER)
@@ -268,6 +329,31 @@ class GroupOrderHttpTests(unittest.TestCase):
             {"X-Organizer-Token": organizer_token})
         self.assertEqual(status, 200)
         self.assertEqual(closed["session"]["status"], "closed")
+
+        status, private = self.request(
+            "GET", f"/api/group-orders/{room_id}/organizer", headers={
+                "X-Organizer-Token": organizer_token,
+            })
+        self.assertEqual(status, 200)
+        self.assertIsNone(private["session"]["preview_url"])
+
+        status, finalized = self.request(
+            "POST", f"/api/group-orders/{room_id}/finalize", {},
+            {"X-Organizer-Token": organizer_token})
+        self.assertEqual(status, 200)
+        self.assertEqual(finalized["session"]["status"], "closed")
+        self.assertEqual(finalized["preview_url"],
+                         f"/preview/{finalized['run_id']}")
+
+        status, repeated = self.request(
+            "POST", f"/api/group-orders/{room_id}/finalize", {},
+            {"X-Organizer-Token": organizer_token})
+        self.assertEqual(repeated["run_id"], finalized["run_id"])
+
+        status, run_response = self.request("GET", finalized["preview_url"].replace(
+            "/preview/", "/api/runs/"))
+        self.assertEqual(status, 200)
+        self.assertEqual(run_response["run"]["source"]["kind"], "group_order")
 
     def test_bad_room_payloads_return_structured_errors(self):
         status, invalid = self.request(

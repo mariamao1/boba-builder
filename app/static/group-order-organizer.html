@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#faf6f1">
+<title>Organizer dashboard — Boba Builder</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/group-order.css">
+<link rel="stylesheet" href="/static/group-order-organizer.css">
+</head>
+<body class="participant-page organizer-page">
+<a class="skip" href="#dashboard">Skip to dashboard</a>
+
+<header class="masthead participant-head organizer-head">
+  <div class="wrap organizer-wrap">
+    <p class="eyebrow">Organizer dashboard</p>
+    <h1><span class="cup" aria-hidden="true"></span> <span id="room-title">Your group order</span></h1>
+    <p class="tagline" id="room-subtitle">Review submissions and build the final cart.</p>
+  </div>
+</header>
+
+<main class="wrap organizer-wrap" id="dashboard">
+  <section class="card access-card" id="access-card">
+    <p class="step-label">Organizer access</p>
+    <h2>Open your dashboard</h2>
+    <p class="muted">Paste the private organizer token returned when this group order was created.</p>
+    <form id="access-form" class="access-form">
+      <label for="organizer-token">Organizer token</label>
+      <input id="organizer-token" type="password" autocomplete="off" required>
+      <button class="btn primary" id="access-submit" type="submit">Open dashboard</button>
+    </form>
+    <div class="status" id="access-status" role="status" aria-live="polite"></div>
+  </section>
+
+  <div id="dashboard-content" hidden>
+    <section class="room-strip organizer-strip" id="room-strip" aria-live="polite">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span>Loading group order…</span>
+    </section>
+
+    <section class="card organizer-toolbar" aria-label="Group order controls">
+      <div class="share-block">
+        <p class="step-label">Participant link</p>
+        <strong>Invite people to add their drinks</strong>
+        <div class="share-actions">
+          <button class="btn ghost compact" id="copy-link" type="button">Copy link</button>
+          <a class="text-button" id="open-participant" href="#" target="_blank" rel="noopener">Open participant view</a>
+        </div>
+      </div>
+      <div class="session-actions">
+        <button class="btn ghost compact" id="refresh" type="button">Refresh now</button>
+        <button class="btn ghost compact" id="toggle-lock" type="button" hidden>Pause submissions</button>
+        <button class="text-button forget-access" id="forget-access" type="button">Forget token</button>
+      </div>
+    </section>
+
+    <section class="summary-grid" aria-label="Running totals">
+      <article class="summary-card"><strong id="drink-count">0</strong><span>Drinks</span></article>
+      <article class="summary-card"><strong id="people-count">0</strong><span>People</span></article>
+      <article class="summary-card"><strong id="line-count">0</strong><span>Order lines</span></article>
+      <article class="summary-card live-card">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span><strong id="live-label">Live</strong><small id="last-updated">Waiting for an update</small></span>
+      </article>
+    </section>
+
+    <div class="organizer-layout">
+      <section class="card submissions-card" aria-labelledby="submissions-heading">
+        <div class="organizer-section-heading">
+          <div>
+            <p class="step-label">By person</p>
+            <h2 id="submissions-heading">Submitted orders</h2>
+          </div>
+          <span class="muted" id="moderation-note">Remove junk or duplicate lines before finalizing.</span>
+        </div>
+        <div id="people-orders" aria-live="polite">
+          <p class="muted empty-state">No drinks have been submitted yet.</p>
+        </div>
+      </section>
+
+      <aside class="organizer-sidebar">
+        <section class="card drink-rollup-card" aria-labelledby="drink-rollup-heading">
+          <p class="step-label">By drink</p>
+          <h2 id="drink-rollup-heading">Drink totals</h2>
+          <div id="drink-rollup"><p class="muted">Nothing to total yet.</p></div>
+        </section>
+
+        <section class="card finalize-card" aria-labelledby="finalize-heading">
+          <p class="step-label">Final step</p>
+          <h2 id="finalize-heading">Ready to order?</h2>
+          <p id="finalize-copy">Finalizing closes submissions permanently and opens the existing cart review.</p>
+          <button class="btn primary finalize-button" id="finalize" type="button" disabled>Finalize &amp; review cart</button>
+          <button class="btn primary finalize-button" id="continue-preview" type="button" hidden>Continue to cart review</button>
+          <div class="status" id="action-status" role="status" aria-live="polite"></div>
+        </section>
+      </aside>
+    </div>
+  </div>
+</main>
+
+<script src="/static/group-order-organizer.js"></script>
+</body>
+</html>

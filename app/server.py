@@ -16,15 +16,17 @@ Routes
     GET  /api/drinks?q=          type-ahead search over the store's menu
     GET  /api/menu               participant menu with per-drink option groups
     GET  /group-order/<room_id>  participant-facing order entry page
+    GET  /group-order/<room_id>/organizer  private organizer dashboard
     POST /api/runs/<run_id>/rows/<n>  edit one row: any of {"drink", "size",
                                       "sugar", "ice", "milk", "toppings",
                                       "quantity", "person", "notes"}
     POST /api/runs/<run_id>/process   build the cart and return its handoff URL
     POST /api/group-orders            create an anonymous shared order room
     GET  /api/group-orders/<room_id>  retrieve its aggregated orders
+    GET  .../<room_id>/organizer      authenticated organizer room state
     POST /api/group-orders/<room_id>/orders  add an order while the room is open
     PATCH/DELETE .../orders/<order_id>       manage an order with its edit token
-    POST .../<lock|reopen|close>              organizer lifecycle controls
+    POST .../<lock|reopen|close|finalize>     organizer lifecycle controls
     GET  /api/health
 
 Reading a run runs the read-only stages first (`pipeline.enrich`), so the match
@@ -230,9 +232,17 @@ class Handler(BaseHTTPRequestHandler):
         match = re.fullmatch(rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})", path)
         if match:
             return self._get_group_order(match.group(1))
+        match = re.fullmatch(
+            rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/organizer", path)
+        if match:
+            return self._get_group_order_for_organizer(match.group(1))
         match = re.fullmatch(rf"/group-order/({GROUP_ORDER_ID_PATTERN})", path)
         if match:
             return self._serve_static("group-order.html")
+        match = re.fullmatch(
+            rf"/group-order/({GROUP_ORDER_ID_PATTERN})/organizer", path)
+        if match:
+            return self._serve_static("group-order-organizer.html")
 
         self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain; charset=utf-8")
 
@@ -257,6 +267,15 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True, "session": room},
                           extra={"Cache-Control": "no-store"})
 
+    def _get_group_order_for_organizer(self, room_id: str):
+        try:
+            room = group_orders.get_for_organizer(
+                room_id, self._organizer_token())
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        return self._json({"ok": True, "session": room},
+                          extra={"Cache-Control": "no-store"})
+
     # --- POST ---------------------------------------------------------------
 
     def do_POST(self):
@@ -275,6 +294,10 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 status = {"lock": "locked", "reopen": "open", "close": "closed"}[match.group(2)]
                 return self._set_group_order_status(match.group(1), status)
+            match = re.fullmatch(
+                rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/finalize", path)
+            if match:
+                return self._finalize_group_order(match.group(1))
             match = re.fullmatch(r"/api/runs/([0-9a-f]+)/process", path)
             if match:
                 return self._process(match.group(1))
@@ -350,6 +373,8 @@ class Handler(BaseHTTPRequestHandler):
             "session_id": room_id,
             "organizer_token": organizer_token,
             "share_url": f"/group-order/{room_id}",
+            "organizer_url": (
+                f"/group-order/{room_id}/organizer#token={organizer_token}"),
             "api_url": f"/api/group-orders/{room_id}",
             "session": room,
         }, HTTPStatus.CREATED, {"Cache-Control": "no-store"})
@@ -376,6 +401,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(str(exc))
         return self._json({"ok": True, "session": room},
                           extra={"Cache-Control": "no-store"})
+
+    def _finalize_group_order(self, room_id: str):
+        try:
+            payload = self._read_json()
+            room, run_id = group_orders.finalize(
+                room_id, self._organizer_token(payload))
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        except ValueError as exc:
+            return self._error(str(exc))
+        return self._json({
+            "ok": True,
+            "session": room,
+            "run_id": run_id,
+            "preview_url": f"/preview/{run_id}",
+        }, extra={"Cache-Control": "no-store"})
 
     def _import(self):
         content_type = self.headers.get("Content-Type", "")

@@ -42,6 +42,8 @@ Python 3.11+, standard library only — nothing to install.
       (`docs/task8-group-order-sessions.md`)
 - [x] **Task 9** — mobile participant order entry using the captured menu
       (`docs/task9-participant-order-entry.md`)
+- [x] **Task 10** — live organizer dashboard, moderation, and cart-pipeline handoff
+      (`docs/task10-organizer-dashboard.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.

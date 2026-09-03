@@ -53,3 +53,40 @@ Lifecycle
 - Closed and expired rooms remain available for review. Rooms more than seven
   days past expiration are deleted, and at most 200 recent closed/expired room
   files are retained. Live rooms are never removed by the archive-size cap.
+
+Organizer dashboard and live updates
+------------------------------------
+- The organizer view is /group-order/<session_id>/organizer. Its private token
+  may arrive once in the URL fragment, which browsers do not send to the
+  server; the page moves it to localStorage and immediately removes the
+  fragment from the address bar. Later organizer reads and mutations send the
+  token in X-Organizer-Token. The participant URL never contains this token.
+- The dashboard polls its authenticated room endpoint every five seconds while
+  the tab is visible and refreshes immediately when a hidden tab becomes
+  visible again. Five seconds is live enough for a small group order, avoids a
+  WebSocket/SSE server and reconnect protocol in this standard-library app,
+  and bounds idle traffic by pausing background-tab polls. A manual refresh is
+  also available.
+- The dashboard shows running people, drink, and order-line totals. Lines are
+  grouped case-insensitively by person and a separate rollup totals quantities
+  by drink. Exact same-person/order configurations are marked as possible
+  duplicates, but are never removed automatically.
+- Pausing a room blocks participant additions, edits, and removals. The
+  organizer may still remove a line while paused, making it possible to freeze
+  the incoming set before moderating junk or duplicates.
+
+Finalization and handoff
+------------------------
+- Finalization is an organizer-authenticated, idempotent operation. Under the
+  room lock it snapshots the current lines, runs them through the same importer
+  normalization used by spreadsheet orders, saves a normal pipeline run, and
+  permanently closes the room. Repeating the request returns the same run while
+  it is retained instead of creating a competing cart review.
+- The response points to /preview/<run_id>. From that point the existing Task 5
+  preview, matching, cart build, manifest, and Kung Fu Tea handoff are reused;
+  the group-order path never submits checkout or payment itself.
+- Empty or expired rooms cannot be finalized. A room manually closed through
+  the older lifecycle endpoint can still be pushed to preview, so closing it
+  early does not strand valid submissions.
+- Finalized run URLs are returned only by the authenticated organizer endpoint,
+  not by the public participant room response.

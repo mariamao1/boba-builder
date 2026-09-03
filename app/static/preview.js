@@ -558,6 +558,7 @@ function appendNotes(tbody, row, worst, width) {
 function sourceText(source) {
   if (!source) return 'your sheet';
   if (source.kind === 'google_sheet') return 'your Google Sheet';
+  if (source.kind === 'group_order') return 'your group order';
   return source.filename ? `"${source.filename}"` : 'your file';
 }
 

@@ -41,8 +41,9 @@ database instead.
 ```
 
 Returns `201` with `session_id`, `share_url`, `api_url`, the public `session`,
-and an `organizer_token`. The client must retain the token; it is not recoverable
-from a later room read.
+an `organizer_token`, and an `organizer_url` whose fragment carries that token
+to the organizer dashboard. The client must retain the token; it is not
+recoverable from a later public room read.
 
 ### Read a room
 
@@ -84,16 +85,23 @@ the token, not the name, is the proof of ownership.
 - `DELETE /api/group-orders/<room_id>/orders/<order_id>`
 
 Send the returned token in `X-Order-Token`. The organizer may manage any line
-with `X-Organizer-Token`. Mutations are only allowed while the room is open.
+with `X-Organizer-Token`. Contributor mutations are allowed only while the room
+is open; the organizer may also remove lines while it is locked for review.
 
 ### Organizer controls
 
 - `POST /api/group-orders/<room_id>/lock`
 - `POST /api/group-orders/<room_id>/reopen`
 - `POST /api/group-orders/<room_id>/close`
+- `POST /api/group-orders/<room_id>/finalize`
+
+`GET /api/group-orders/<room_id>/organizer` returns authenticated dashboard
+state, including the saved preview URL after finalization. The public room read
+does not expose that URL.
 
 Send `X-Organizer-Token`. A Bearer token or the matching token in a JSON body is
 also accepted. Locking is reversible; closing and expiration are terminal.
+Finalizing creates an idempotent Task 5 pipeline run and closes the room.
 
 Errors are JSON with `ok: false`, a human-readable `error`, and a stable `code`.
 Missing rooms return 404, bad tokens 403, locked/closed writes 409, and expired

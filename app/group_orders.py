@@ -22,6 +22,8 @@ import secrets
 import threading
 from pathlib import Path
 
+from . import importer, runs
+
 SESSION_DIR = Path(os.environ.get(
     "BOBA_GROUP_ORDER_DIR",
     Path(__file__).resolve().parent.parent / ".group-orders",
@@ -90,6 +92,10 @@ class OrderNotFound(GroupOrderError):
 
 class RoomFull(RoomNotOpen):
     code = "room_full"
+
+
+class EmptyRoom(RoomNotOpen):
+    code = "empty_room"
 
 
 def _utcnow() -> dt.datetime:
@@ -334,6 +340,21 @@ def get(room_id: str, *, now: dt.datetime | None = None) -> dict:
         return public_room(_read(room_id), now=now)
 
 
+def get_for_organizer(room_id: str, organizer_token: str | None, *,
+                      now: dt.datetime | None = None) -> dict:
+    """Return organizer-only room state after checking its bearer token."""
+    with _room_lock(room_id):
+        room = _read(room_id)
+        if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
+            raise Forbidden("the organizer token is missing or invalid")
+        result = public_room(room, now=now)
+        run_id = room.get("finalized_run_id")
+        result["finalized_at"] = room.get("finalized_at")
+        result["preview_url"] = (
+            f"/preview/{run_id}" if run_id and runs.load(run_id) is not None else None)
+        return result
+
+
 def _require_open(room: dict, now: dt.datetime) -> None:
     status = _effective_status(room, now)
     if status == "expired":
@@ -405,14 +426,77 @@ def delete_order(room_id: str, order_id: str, *, order_token: str | None = None,
     current = _as_utc(now)
     with _room_lock(room_id):
         room = _read(room_id)
-        _require_open(room, current)
+        status = _effective_status(room, current)
+        organizer_can_manage = _matches_secret(
+            organizer_token, room.get("organizer_token_hash"))
+        if status == "expired":
+            raise RoomExpired("this group order has expired")
+        if status == "closed":
+            raise RoomNotOpen("this group order is closed")
+        # Locking freezes participant changes while the organizer reviews the
+        # room. The organizer can still remove junk or an exact duplicate.
+        if status != "open" and not organizer_can_manage:
+            raise RoomNotOpen(f"this group order is {status}")
         order = _find_order(room, order_id)
-        if not _can_manage_order(room, order, order_token, organizer_token):
+        if not (organizer_can_manage
+                or _matches_secret(order_token, order.get("edit_token_hash"))):
             raise Forbidden("the order edit token is missing or invalid")
         room["orders"].remove(order)
         room["updated_at"] = _timestamp(current)
         _write(room)
         return public_room(room, now=current)
+
+
+def finalize(room_id: str, organizer_token: str | None, *,
+             now: dt.datetime | None = None) -> tuple[dict, str]:
+    """Close a room and turn its current orders into a normal pipeline run.
+
+    The room lock covers both snapshotting the lines and recording the run id,
+    so additions cannot race finalization and concurrent retries converge on
+    the same preview. A previously closed room may still be finalized, which
+    preserves the Task 8 close endpoint as a useful manual control.
+    """
+    current = _as_utc(now)
+    with _room_lock(room_id):
+        room = _read(room_id)
+        if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
+            raise Forbidden("the organizer token is missing or invalid")
+        if _effective_status(room, current) == "expired":
+            raise RoomExpired("this group order has expired")
+
+        existing = room.get("finalized_run_id")
+        if existing and runs.load(existing) is not None:
+            return get_for_organizer(room_id, organizer_token, now=current), existing
+
+        orders = room.get("orders") or []
+        if not orders:
+            raise EmptyRoom("add at least one drink before finalizing this group order")
+
+        fields = ("person",) + ORDER_FIELDS
+        rows_payload = [
+            {field: (", ".join(order.get(field) or []) if field == "toppings"
+                     else order.get(field, ""))
+             for field in fields}
+            for order in orders
+        ]
+        result = importer.import_json(json.dumps({"rows": rows_payload}))
+        finalized_at = _timestamp(current)
+        result.source = {
+            "kind": "group_order",
+            "session_id": room_id,
+            "title": room["title"],
+            "finalized_at": finalized_at,
+        }
+        run_id = runs.new_id()
+        runs.save(result.as_dict(), run_id)
+
+        room["status"] = "closed"
+        room["updated_at"] = finalized_at
+        room["closed_at"] = room.get("closed_at") or finalized_at
+        room["finalized_at"] = finalized_at
+        room["finalized_run_id"] = run_id
+        _write(room)
+        return get_for_organizer(room_id, organizer_token, now=current), run_id
 
 
 def set_status(room_id: str, status: str, organizer_token: str | None, *,
