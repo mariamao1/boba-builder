@@ -578,7 +578,16 @@ elements.quantity.addEventListener('input', updateEstimate);
 elements.form.addEventListener('submit', submitOrder);
 elements.refreshOrders.addEventListener('click', () => refreshSession(true));
 
-Promise.all([request(apiBase), request('/api/menu')])
+request(apiBase)
+  .then(async (roomData) => {
+    const restaurantId = roomData.session.restaurant_id;
+    const menuData = await request(
+      `/api/menu?restaurant_id=${encodeURIComponent(restaurantId)}`);
+    if (menuData.menu.restaurant_id !== restaurantId) {
+      throw new Error('The selected store menu could not be verified.');
+    }
+    return [roomData, menuData];
+  })
   .then(([roomData, menuData]) => {
     session = roomData.session;
     menu = menuData.menu;

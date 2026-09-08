@@ -8,12 +8,14 @@ this has to run on (no pip, no node — same wall Task 1 hit). It is a local
 single-group tool, so a threading stdlib server is genuinely enough.
 
 Routes
-    GET  /                       upload page
+    GET  /                       choose spreadsheet import or a group-order link
     GET  /preview/<run_id>       review the parsed order, hand off to Tasks 3-4
+    GET  /saved-orders[/<id>]    list or view this browser's finished orders
     GET  /template.csv           the order template, filled with real menu items
     POST /api/import             file upload or {"sheet_url": ...} -> run_id
     GET  /api/runs/<run_id>      the parsed order, matched to the menu, as JSON
     GET  /api/drinks?q=          type-ahead search over the store's menu
+    GET  /api/stores             captured stores available for group orders
     GET  /api/menu               participant menu with per-drink option groups
     GET  /group-order/<room_id>  participant-facing order entry page
     GET  /group-order/<room_id>/organizer  private organizer dashboard
@@ -21,6 +23,10 @@ Routes
                                       "sugar", "ice", "milk", "toppings",
                                       "quantity", "person", "notes"}
     POST /api/runs/<run_id>/process   build the cart and return its handoff URL
+    GET/POST /api/saved-orders   list or save completed cart snapshots
+    GET  /api/saved-orders/<id>  retrieve one browser-owned snapshot
+    GET  .../<id>/export         export its normalized rows as CSV
+    POST .../<id>/repeat         make a fresh editable run from its rows
     POST /api/group-orders            create an anonymous shared order room
     GET  /api/group-orders/<room_id>  retrieve its aggregated orders
     GET  .../<room_id>/organizer      authenticated organizer room state
@@ -46,7 +52,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import group_orders, importer, menu, options, pipeline, runs, sheets, template
+from . import group_orders, importer, menu, options, pipeline, runs, saved_orders, sheets, template
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = importer.MAX_UPLOAD_BYTES + 512 * 1024  # payload plus multipart framing
@@ -64,6 +70,7 @@ CONTENT_TYPES = {
 RUN_ID_RE = re.compile(r"^[0-9a-f]{4,32}$")
 GROUP_ORDER_ID_PATTERN = r"[A-Za-z0-9_-]{20,64}"
 GROUP_ORDER_LINE_ID_PATTERN = r"[A-Za-z0-9_-]{16,64}"
+SAVED_ORDER_ID_PATTERN = r"[A-Za-z0-9_-]{20,64}"
 
 
 # --- multipart/form-data ----------------------------------------------------
@@ -167,9 +174,16 @@ class Handler(BaseHTTPRequestHandler):
         return (self.headers.get("X-Order-Token") or self._bearer_token()
                 or (payload or {}).get("order_token"))
 
+    def _saved_orders_token(self) -> str | None:
+        return self.headers.get("X-Saved-Orders-Token") or self._bearer_token()
+
     def _group_error(self, exc: group_orders.GroupOrderError):
         body = json.dumps({"ok": False, "error": str(exc), "code": exc.code}).encode("utf-8")
         return self._send(exc.status, body, "application/json; charset=utf-8",
+                          {"Cache-Control": "no-store"})
+
+    def _saved_order_error(self, exc: saved_orders.SavedOrderError):
+        return self._json({"ok": False, "error": str(exc)}, exc.status,
                           {"Cache-Control": "no-store"})
 
     def _serve_static(self, name: str):
@@ -205,29 +219,73 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/preview/"):
             return self._serve_static("preview.html")
 
+        if path == "/saved-orders" or re.fullmatch(
+                rf"/saved-orders/{SAVED_ORDER_ID_PATTERN}", path):
+            return self._serve_static("saved-orders.html")
+
         if path == "/api/health":
             return self._json({"ok": True, "stages": pipeline.status()})
 
         if path == "/api/menu-hints":
             return self._json(template.menu_hints())
 
+        if path == "/api/stores":
+            try:
+                stores = menu.store_directory()
+            except menu.StoreMenuUnavailable as exc:
+                return self._error(str(exc), HTTPStatus.BAD_GATEWAY)
+            return self._json({
+                "ok": True,
+                "default_restaurant_id": menu.TARGET_STORE,
+                "stores": stores,
+            }, extra={"Cache-Control": "no-cache"})
+
         if path == "/api/menu":
-            return self._json({"ok": True, "menu": menu.participant_menu()},
+            query = parse_qs(parts.query)
+            restaurant_id = (query.get("restaurant_id") or [None])[0]
+            if restaurant_id and menu.store_summary(restaurant_id) is None:
+                return self._error("that store menu is not available", HTTPStatus.NOT_FOUND)
+            return self._json({"ok": True, "menu": menu.participant_menu(restaurant_id)},
                               extra={"Cache-Control": "no-cache"})
 
         if path == "/api/drinks":
             # Type-ahead for the "pick a drink" box on the preview page.
             query = parse_qs(parts.query)
             text = (query.get("q") or [""])[0]
+            restaurant_id = (query.get("restaurant_id") or [None])[0]
+            if restaurant_id and menu.store_summary(restaurant_id) is None:
+                return self._error("that store menu is not available", HTTPStatus.NOT_FOUND)
             try:
                 limit = max(1, min(20, int((query.get("limit") or ["6"])[0])))
             except ValueError:
                 limit = 6
-            return self._json({"drinks": options.store_options().search_drinks(text, limit)})
+            return self._json({
+                "drinks": options.store_options(restaurant_id).search_drinks(text, limit),
+            })
 
         match = re.fullmatch(r"/api/runs/([0-9a-f]+)", path)
         if match:
             return self._get_run(match.group(1))
+
+        if path == "/api/saved-orders":
+            try:
+                orders = saved_orders.list_orders(self._saved_orders_token())
+            except saved_orders.SavedOrderError as exc:
+                return self._saved_order_error(exc)
+            return self._json({"ok": True, "orders": orders},
+                              extra={"Cache-Control": "no-store"})
+        match = re.fullmatch(
+            rf"/api/saved-orders/({SAVED_ORDER_ID_PATTERN})/export", path)
+        if match:
+            return self._export_saved_order(match.group(1))
+        match = re.fullmatch(rf"/api/saved-orders/({SAVED_ORDER_ID_PATTERN})", path)
+        if match:
+            try:
+                order = saved_orders.get(match.group(1), self._saved_orders_token())
+            except saved_orders.SavedOrderError as exc:
+                return self._saved_order_error(exc)
+            return self._json({"ok": True, "order": order},
+                              extra={"Cache-Control": "no-store"})
 
         match = re.fullmatch(rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})", path)
         if match:
@@ -251,7 +309,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._error("bad run id", HTTPStatus.BAD_REQUEST)
         run = runs.load(run_id)
         if run is None:
-            return self._error("that import has expired — upload the sheet again",
+            return self._error("that saved order has expired — start again",
                                HTTPStatus.NOT_FOUND)
         # Matched on the way out rather than on the way in: the match is derived
         # from the rows, so deriving it fresh is the only way it can't go stale
@@ -285,6 +343,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._import()
             if path == "/api/group-orders":
                 return self._create_group_order()
+            if path == "/api/saved-orders":
+                return self._create_saved_order()
+            match = re.fullmatch(
+                rf"/api/saved-orders/({SAVED_ORDER_ID_PATTERN})/repeat", path)
+            if match:
+                return self._repeat_saved_order(match.group(1))
             match = re.fullmatch(
                 rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/orders", path)
             if match:
@@ -312,6 +376,50 @@ class Handler(BaseHTTPRequestHandler):
                                "file instead of the link",
                                HTTPStatus.INTERNAL_SERVER_ERROR)
         self._send(HTTPStatus.NOT_FOUND, b"not found", "text/plain; charset=utf-8")
+
+    def _create_saved_order(self):
+        try:
+            payload = self._read_json()
+            run_id = str(payload.get("run_id") or "")
+            if not RUN_ID_RE.fullmatch(run_id):
+                return self._error("choose a finished order to save")
+            run = runs.load(run_id)
+            if run is None:
+                return self._error("that finished order has expired", HTTPStatus.NOT_FOUND)
+            order = saved_orders.save_finished(
+                run,
+                self._saved_orders_token(),
+                payload.get("label"),
+                payload.get("order_date"),
+            )
+        except saved_orders.SavedOrderError as exc:
+            return self._saved_order_error(exc)
+        return self._json({
+            "ok": True,
+            "order": order,
+            "saved_order_url": f"/saved-orders/{order['id']}",
+        }, HTTPStatus.CREATED, {"Cache-Control": "no-store"})
+
+    def _repeat_saved_order(self, order_id: str):
+        try:
+            run_id = saved_orders.repeat(order_id, self._saved_orders_token())
+        except saved_orders.SavedOrderError as exc:
+            return self._saved_order_error(exc)
+        return self._json({
+            "ok": True,
+            "run_id": run_id,
+            "preview_url": f"/preview/{run_id}",
+        }, HTTPStatus.CREATED, {"Cache-Control": "no-store"})
+
+    def _export_saved_order(self, order_id: str):
+        try:
+            body = saved_orders.export_csv(order_id, self._saved_orders_token())
+        except saved_orders.SavedOrderError as exc:
+            return self._saved_order_error(exc)
+        return self._send(HTTPStatus.OK, body, "text/csv; charset=utf-8", {
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="boba-saved-order-{order_id}.csv"',
+        })
 
     def do_PATCH(self):
         path = unquote(urlparse(self.path).path)
@@ -357,12 +465,17 @@ class Handler(BaseHTTPRequestHandler):
     def _create_group_order(self):
         try:
             payload = self._read_json()
+            restaurant_id = payload.get("restaurant_id") or menu.TARGET_STORE
+            menu.prepare_store(restaurant_id)
             room, organizer_token = group_orders.create(
                 title=payload.get("title", ""),
                 organizer_name=payload.get("organizer_name", ""),
+                restaurant_id=restaurant_id,
                 expires_in_hours=payload.get(
                     "expires_in_hours", group_orders.DEFAULT_TTL_HOURS),
             )
+        except menu.StoreMenuUnavailable as exc:
+            return self._error(str(exc), HTTPStatus.BAD_GATEWAY)
         except group_orders.GroupOrderError as exc:
             return self._group_error(exc)
         except ValueError as exc:
@@ -476,7 +589,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._error("bad run id")
         run = runs.load(run_id)
         if run is None:
-            return self._error("that import has expired — upload the sheet again",
+            return self._error("that saved order has expired — start again",
                                HTTPStatus.NOT_FOUND)
         try:
             changes = json.loads(self._read_body() or b"{}")
@@ -504,7 +617,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._error("bad run id")
         run = runs.load(run_id)
         if run is None:
-            return self._error("that import has expired — upload the sheet again",
+            return self._error("that saved order has expired — start again",
                                HTTPStatus.NOT_FOUND)
         try:
             result = pipeline.process(run)
@@ -523,7 +636,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Boba Builder import & upload page")
+    parser = argparse.ArgumentParser(description="Boba Builder group-order app")
     parser.add_argument("--host", default="127.0.0.1",
                         help="default 127.0.0.1; use 0.0.0.0 to share on your network")
     parser.add_argument("--port", type=int, default=8000)

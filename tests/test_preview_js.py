@@ -355,8 +355,27 @@ report({text: back.textContent, href: back.href,
         duplicate: !!byText('btn ghost', '← Back to import')});
 """)
         self.assertEqual(seen["text"], "← Back to import")
-        self.assertEqual(seen["href"], "/")
+        self.assertEqual(seen["href"], "/?method=sheet")
         self.assertFalse(seen["duplicate"])
+
+    def test_a_group_order_returns_to_its_organizer(self):
+        seen = self.drive("""
+var groupRun = Object.assign({}, reply.run, {
+  source: {kind: 'group_order', session_id: 'abcdefghijklmnopqrst'},
+});
+render(groupRun, reply.stages);
+var back = document.getElementById('preview-back');
+report({
+  text: back.textContent,
+  href: back.href,
+  step: document.getElementById('step-source-label').textContent,
+});
+""")
+        self.assertEqual(seen, {
+            "text": "← Back to organizer",
+            "href": "/group-order/abcdefghijklmnopqrst/organizer",
+            "step": "Collect group order",
+        })
 
     def test_the_cart_back_button_returns_to_the_order_screen(self):
         seen = self.drive("""
@@ -380,7 +399,7 @@ report({cartText: cartText, reviewText: back.textContent, href: back.href,
 """)
         self.assertEqual(seen["cartText"], "← Back to check order")
         self.assertEqual(seen["reviewText"], "← Back to import")
-        self.assertEqual(seen["href"], "/")
+        self.assertEqual(seen["href"], "/?method=sheet")
         self.assertEqual(seen["checkStep"], "on")
         self.assertEqual(seen["tables"], 1)
         self.assertFalse(seen["duplicate"])
@@ -408,6 +427,48 @@ report({
 """)
         self.assertEqual(seen, {"open": True, "person": True, "price": True,
                                 "total": True, "closed": True})
+
+    def test_a_reviewable_cart_can_be_saved(self):
+        seen = self.drive("""
+var built = Object.assign({}, reply.run, {
+  handoff_url: 'https://kft.orderexperience.net/store/menu?order_id=source',
+  cart: {
+    status: 'ready', review_ready: true, warnings: [], failed: [], skipped: [],
+    store: {}, totals: {}, counts: {}, added: [],
+  },
+});
+render(built, reply.stages, true);
+report({heading: !!byText('', 'Save this finished order'),
+        button: !!byText('btn primary', 'Save order')});
+""")
+        self.assertEqual(seen, {"heading": True, "button": True})
+
+    def test_saving_posts_the_label_date_and_finished_run(self):
+        seen = self.drive("""
+var built = Object.assign({}, reply.run, {
+  cart: {
+    status: 'ready', review_ready: true, warnings: [], failed: [], skipped: [],
+    store: {}, totals: {}, counts: {}, added: [],
+  },
+});
+render(built, reply.stages, true);
+var form = null, name = null, date = null;
+nodes.body.walk(function (node) {
+  if (node.className === 'save-order-form') form = node;
+  if (node.attrs && node.attrs['aria-label'] === 'Saved order name') name = node;
+  if (node.attrs && node.attrs['aria-label'] === 'Order date') date = node;
+});
+name.value = 'Tuesday tea';
+date.value = '2026-09-08';
+form.dispatch('submit');
+drainMicrotasks();
+report({url: posted[0].url, body: JSON.parse(posted[0].body)});
+""")
+        self.assertEqual(seen, {
+            "url": "/api/saved-orders",
+            "body": {"run_id": "testrun", "label": "Tuesday tea",
+                     "order_date": "2026-09-08"},
+        })
 
     def test_the_handoff_reconciles_requested_placed_and_missing_drinks(self):
         seen = self.drive("""

@@ -411,12 +411,29 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(status, 200, path)
             self.assertTrue(body, path)
 
+    def test_home_page_offers_both_collection_paths(self):
+        status, body, _headers = self.get("/")
+        self.assertEqual(status, 200)
+        page = body.decode("utf-8")
+        self.assertIn("Start a group-order link", page)
+        self.assertIn("Import a spreadsheet", page)
+        self.assertIn('id="group-form"', page)
+        self.assertIn('id="group-store"', page)
+        self.assertIn('id="store-search"', page)
+        self.assertIn('role="combobox"', page)
+        self.assertIn('id="store-results"', page)
+        self.assertIn('id="file-form"', page)
+
+        _status, script, _headers = self.get("/static/app.js")
+        self.assertIn("fetch('/api/group-orders'", script.decode("utf-8"))
+        self.assertIn("fetch('/api/stores')", script.decode("utf-8"))
+
     def test_preview_has_a_back_button_to_the_previous_step(self):
         status, body, _headers = self.get("/preview/abc123")
         self.assertEqual(status, 200)
         page = body.decode("utf-8")
         self.assertIn('aria-label="Previous step"', page)
-        self.assertIn('href="/">← Back to import</a>', page)
+        self.assertIn('href="/">← Back to start</a>', page)
 
     def test_template_download(self):
         status, body, headers = self.get("/template.csv")

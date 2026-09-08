@@ -1,6 +1,6 @@
-"""Where an import lives between the upload page and the preview page.
+"""Where collected orders live between their entry path and the preview page.
 
-One JSON file per import under .runs/, keyed by an unguessable id. A file
+One JSON file per run under .runs/, keyed by an unguessable id. A file
 rather than memory so the server can restart mid-demo, and so Tasks 3-5 can be
 run against a real import from the command line:
 

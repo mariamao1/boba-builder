@@ -36,6 +36,7 @@ database instead.
 {
   "title": "Monday tea",
   "organizer_name": "Mariam",
+  "restaurant_id": "650c9c52d73592bc0e0bd5a7",
   "expires_in_hours": 24
 }
 ```
@@ -45,12 +46,18 @@ an `organizer_token`, and an `organizer_url` whose fragment carries that token
 to the organizer dashboard. The client must retain the token; it is not
 recoverable from a later public room read.
 
+`restaurant_id` must identify one of the visible takeout locations returned by
+`GET /api/stores`. The selected menu is fetched and cached at room creation.
+The id is saved on the room and cannot change afterward; participant menu
+choices, final matching, and cart creation all use that store.
+
 ### Read a room
 
 `GET /api/group-orders/<room_id>`
 
 The session contains its order lines plus totals for orders, drinks, and people,
-including a `by_person` rollup. Secret hashes and raw tokens are never included.
+including a `by_person` rollup. It also names the selected `restaurant_id` and
+`store_name`. Secret hashes and raw tokens are never included.
 
 `GET /group-order/<room_id>` is the participant-facing HTML page built in Task
 9. It reads this API in the browser.

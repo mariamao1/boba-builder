@@ -471,10 +471,10 @@ def _join(names, conjunction: str = "and") -> str:
     return f"{', '.join(names[:-1])} {conjunction} {names[-1]}"
 
 
-@functools.lru_cache(maxsize=1)
-def store_options() -> StoreOptions:
-    """The target store's vocabulary. Cached — the snapshot doesn't change."""
-    return StoreOptions(template.menu_hints())
+@functools.lru_cache(maxsize=16)
+def store_options(restaurant_id: str | None = None) -> StoreOptions:
+    """One captured store's vocabulary; the Task 1 store remains the default."""
+    return StoreOptions(template.menu_hints(restaurant_id))
 
 
 # --- applying it to a parsed sheet ------------------------------------------

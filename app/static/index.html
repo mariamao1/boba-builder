@@ -3,126 +3,218 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Boba Builder — import your group order</title>
+<title>Boba Builder — build one group cart</title>
 <link rel="icon" href="/static/favicon.svg">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<a class="skip" href="#import">Skip to upload</a>
+<a class="skip" href="#start">Skip to order options</a>
 
 <header class="masthead">
   <div class="wrap">
     <h1><span class="cup" aria-hidden="true"></span> Boba Builder</h1>
-    <p class="tagline">Drop in the spreadsheet everyone filled out. We'll turn it into one
-      Kung Fu Tea cart you can pay for in your own browser.</p>
+    <p class="tagline">Collect everyone's drinks your way, check one combined order,
+      then open one Kung Fu Tea cart to review and pay for in your own browser.</p>
     <p class="store" id="store-line" hidden></p>
   </div>
 </header>
 
 <main class="wrap">
-
+  <nav class="back-row top-links" aria-label="Order history">
+    <a class="btn ghost" href="/saved-orders">Saved Orders</a>
+  </nav>
   <ol class="steps" aria-label="How this works">
-    <li class="on"><span>1</span> Import the sheet</li>
+    <li class="on"><span>1</span> Collect orders</li>
     <li><span>2</span> Check the order</li>
     <li><span>3</span> Open the cart</li>
   </ol>
 
-  <section class="card" aria-labelledby="format-h">
-    <h2 id="format-h">1. Format the sheet</h2>
-    <p>One row per drink. Only <strong>Name</strong> and <strong>Drink</strong> are required —
-      leave anything else blank and the shop's default is used. Don't fuss over which
-      column things land in: if the toppings end up under Ice, we'll spot it, move it,
-      and tell you what we changed.</p>
-
-    <div class="table-scroll">
-      <table class="cols">
-        <thead>
-          <tr><th>Column</th><th>Required</th><th>Example</th><th>Notes</th></tr>
-        </thead>
-        <tbody>
-          <tr><td><code>Name</code></td><td class="req">yes</td><td>Alice</td>
-              <td>Who the drink is for.</td></tr>
-          <tr><td><code>Drink</code></td><td class="req">yes</td><td>Taro Slush</td>
-              <td>Close enough is fine — we match it to the menu.</td></tr>
-          <tr><td><code>Size</code></td><td>no</td><td>Large</td>
-              <td>Medium, Large, or Hot. <em>Hot is a size here, not a separate drink.</em></td></tr>
-          <tr><td><code>Sugar</code></td><td>no</td><td>50%</td>
-              <td>A percentage reads best: 0%, 30%, 50%, 70%, 100%.</td></tr>
-          <tr><td><code>Ice</code></td><td>no</td><td>Less ice</td>
-              <td>No / Less / Regular / More.</td></tr>
-          <tr><td><code>Toppings</code></td><td>no</td><td>Boba, Pudding</td>
-              <td>Separate several with commas.</td></tr>
-          <tr><td><code>Milk</code></td><td>no</td><td>Soy milk</td>
-              <td>Only some drinks offer this.</td></tr>
-          <tr><td><code>Qty</code></td><td>no</td><td>2</td>
-              <td>Or write <code>Taro Slush x2</code> in the drink cell.</td></tr>
-          <tr><td><code>Notes</code></td><td>no</td><td>extra cold</td>
-              <td>Kept with your copy of the order.</td></tr>
-        </tbody>
-      </table>
+  <section class="entry-choice" id="start" aria-labelledby="start-h">
+    <div class="entry-heading">
+      <p class="choice-kicker">Start here</p>
+      <h2 id="start-h">How do you want to collect orders?</h2>
+      <p>Both options lead to the same review, reconciliation, and cart handoff.</p>
     </div>
 
-    <div class="template-row">
-      <a class="btn" href="/template.csv" download>Download the template</a>
-      <details>
-        <summary>Use it as a Google Sheet</summary>
-        <ol class="tight">
-          <li>Download the template above.</li>
-          <li>In Google Sheets: <strong>File → Import → Upload</strong>, pick the file,
-            choose <em>Replace spreadsheet</em>.</li>
-          <li>Share it with your group and let everyone add a row.</li>
-          <li>Then either paste the link below, or
-            <strong>File → Download → CSV</strong> and upload it.</li>
-        </ol>
-        <p class="muted">Pasting a link needs the sheet set to
-          <em>Anyone with the link</em> (Viewer is enough) — otherwise Google won't let us
-          read it. Uploading a file never needs sharing.</p>
-      </details>
-    </div>
+    <div class="path-grid">
+      <button class="path-card" id="choose-group" type="button"
+              aria-controls="group-path" aria-expanded="false">
+        <span class="path-kicker">Collect together</span>
+        <strong>Start a group-order link</strong>
+        <span>Share a live menu so each person can add and update their own drink.</span>
+        <span class="path-action">Create a group link <span aria-hidden="true">→</span></span>
+      </button>
 
-    <details class="hints">
-      <summary>What can I type in each cell?</summary>
-      <div id="hints-body" class="hints-body">Loading the menu…</div>
-    </details>
+      <button class="path-card" id="choose-sheet" type="button"
+              aria-controls="sheet-path" aria-expanded="false">
+        <span class="path-kicker">Already have a list?</span>
+        <strong>Import a spreadsheet</strong>
+        <span>Upload a CSV or Excel file, or paste a shared Google Sheets link.</span>
+        <span class="path-action">Import a sheet <span aria-hidden="true">→</span></span>
+      </button>
+    </div>
   </section>
 
-  <section class="card" id="import" aria-labelledby="import-h">
-    <h2 id="import-h">2. Import it</h2>
+  <div class="flow-panel" id="group-path" hidden>
+    <section class="card group-start-card" aria-labelledby="group-h">
+      <div class="flow-heading">
+        <div>
+          <p class="choice-kicker">Group link</p>
+          <h2 id="group-h">Create a shared order</h2>
+        </div>
+        <p>We’ll open your private organizer dashboard next. From there, copy the participant link and watch drinks arrive.</p>
+      </div>
 
-    <div class="tabs" role="tablist" aria-label="Import method">
-      <button role="tab" id="tab-file" aria-controls="panel-file" aria-selected="true"
-              class="tab on">Upload a file</button>
-      <button role="tab" id="tab-link" aria-controls="panel-link" aria-selected="false"
-              class="tab">Paste a Sheets link</button>
-    </div>
-
-    <div id="panel-file" role="tabpanel" aria-labelledby="tab-file" class="panel">
-      <form id="file-form">
-        <label class="drop" id="drop" tabindex="0">
-          <span class="drop-icon" aria-hidden="true"></span>
-          <span class="drop-main">Drag a file here, or <u>choose one</u></span>
-          <span class="drop-sub">.xlsx or .csv, up to 8&nbsp;MB</span>
-          <input type="file" id="file-input" name="file"
-                 accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-        </label>
-        <p class="chosen" id="chosen" hidden></p>
-        <button class="btn primary" id="file-submit" type="submit" disabled>Import orders</button>
+      <form id="group-form">
+        <div class="group-form-grid">
+          <div class="store-field">
+            <label for="store-search">
+              Kung Fu Tea store <span class="optional" id="store-count"></span>
+            </label>
+            <div class="store-picker" id="store-picker">
+              <input id="store-search" type="search" role="combobox"
+                     aria-autocomplete="list" aria-controls="store-results"
+                     aria-expanded="false" autocomplete="off" disabled
+                     placeholder="Loading available stores…">
+              <input id="group-store" name="restaurant_id" type="hidden">
+              <div class="store-results" id="store-results" role="listbox" hidden></div>
+            </div>
+            <span class="store-help">Search by store name, city, address, state, or ZIP.</span>
+          </div>
+          <label for="organizer-name">
+            Your name <span class="optional">(optional)</span>
+            <input id="organizer-name" name="organizer_name" type="text" maxlength="80"
+                   autocomplete="name" placeholder="Mariam">
+          </label>
+          <label for="group-title">
+            Order name <span class="optional">(optional)</span>
+            <input id="group-title" name="title" type="text" maxlength="120"
+                   autocomplete="off" placeholder="Monday team boba">
+          </label>
+          <label class="duration-field" for="group-duration">
+            Keep the link open for
+            <select id="group-duration" name="expires_in_hours">
+              <option value="4">4 hours</option>
+              <option value="8">8 hours</option>
+              <option value="24" selected>24 hours</option>
+              <option value="72">3 days</option>
+              <option value="168">7 days</option>
+            </select>
+          </label>
+        </div>
+        <button class="btn primary" id="group-submit" type="submit" disabled>Create group link</button>
       </form>
-    </div>
+      <p class="flow-note">No account is needed. Keep the organizer page private; only its participant link should be shared.</p>
+      <div id="group-status" class="status" role="status" aria-live="polite"></div>
+    </section>
+  </div>
 
-    <div id="panel-link" role="tabpanel" aria-labelledby="tab-link" class="panel" hidden>
-      <form id="link-form">
-        <label for="sheet-url">Google Sheets link</label>
-        <input type="url" id="sheet-url" name="sheet_url" inputmode="url"
-               placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0"
-               autocomplete="off" spellcheck="false">
-        <p class="muted">Paste the link from your browser's address bar, or from
-          <strong>Share → Copy link</strong>. We read the tab the link points at.</p>
-        <button class="btn primary" id="link-submit" type="submit">Import orders</button>
-      </form>
-    </div>
+  <div class="flow-panel" id="sheet-path" hidden>
+    <section class="card" aria-labelledby="format-h">
+      <div class="flow-heading">
+        <div>
+          <p class="choice-kicker">Spreadsheet</p>
+          <h2 id="format-h">Prepare your sheet</h2>
+        </div>
+        <p>One row per drink. Only <strong>Name</strong> and <strong>Drink</strong> are required;
+          blank options use the shop’s defaults.</p>
+      </div>
 
-    <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div class="table-scroll">
+        <table class="cols">
+          <thead>
+            <tr><th>Column</th><th>Required</th><th>Example</th><th>Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Name</code></td><td class="req">yes</td><td>Alice</td>
+                <td>Who the drink is for.</td></tr>
+            <tr><td><code>Drink</code></td><td class="req">yes</td><td>Taro Slush</td>
+                <td>Close enough is fine — we match it to the menu.</td></tr>
+            <tr><td><code>Size</code></td><td>no</td><td>Large</td>
+                <td>Medium, Large, or Hot. <em>Hot is a size here, not a separate drink.</em></td></tr>
+            <tr><td><code>Sugar</code></td><td>no</td><td>50%</td>
+                <td>A percentage reads best: 0%, 30%, 50%, 70%, 100%.</td></tr>
+            <tr><td><code>Ice</code></td><td>no</td><td>Less ice</td>
+                <td>No / Less / Regular / More.</td></tr>
+            <tr><td><code>Toppings</code></td><td>no</td><td>Boba, Pudding</td>
+                <td>Separate several with commas.</td></tr>
+            <tr><td><code>Milk</code></td><td>no</td><td>Soy milk</td>
+                <td>Only some drinks offer this.</td></tr>
+            <tr><td><code>Qty</code></td><td>no</td><td>2</td>
+                <td>Or write <code>Taro Slush x2</code> in the drink cell.</td></tr>
+            <tr><td><code>Notes</code></td><td>no</td><td>extra cold</td>
+                <td>Kept with your copy of the order.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="template-row">
+        <a class="btn" href="/template.csv" download>Download the template</a>
+        <details>
+          <summary>Use it as a Google Sheet</summary>
+          <ol class="tight">
+            <li>Download the template above.</li>
+            <li>In Google Sheets: <strong>File → Import → Upload</strong>, pick the file,
+              choose <em>Replace spreadsheet</em>.</li>
+            <li>Share it with your group and let everyone add a row.</li>
+            <li>Then either paste the link below, or
+              <strong>File → Download → CSV</strong> and upload it.</li>
+          </ol>
+          <p class="muted">Pasting a link needs the sheet set to
+            <em>Anyone with the link</em> (Viewer is enough) — otherwise Google won't let us
+            read it. Uploading a file never needs sharing.</p>
+        </details>
+      </div>
+
+      <details class="hints">
+        <summary>What can I type in each cell?</summary>
+        <div id="hints-body" class="hints-body">Loading the menu…</div>
+      </details>
+    </section>
+
+    <section class="card" id="import" aria-labelledby="import-h">
+      <h2 id="import-h">Import your orders</h2>
+
+      <div class="tabs" role="tablist" aria-label="Import method">
+        <button role="tab" id="tab-file" aria-controls="panel-file" aria-selected="true"
+                class="tab on">Upload a file</button>
+        <button role="tab" id="tab-link" aria-controls="panel-link" aria-selected="false"
+                class="tab">Paste a Sheets link</button>
+      </div>
+
+      <div id="panel-file" role="tabpanel" aria-labelledby="tab-file" class="panel">
+        <form id="file-form">
+          <label class="drop" id="drop" tabindex="0">
+            <span class="drop-icon" aria-hidden="true"></span>
+            <span class="drop-main">Drag a file here, or <u>choose one</u></span>
+            <span class="drop-sub">.xlsx or .csv, up to 8&nbsp;MB</span>
+            <input type="file" id="file-input" name="file"
+                   accept=".csv,.tsv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          </label>
+          <p class="chosen" id="chosen" hidden></p>
+          <button class="btn primary" id="file-submit" type="submit" disabled>Import orders</button>
+        </form>
+      </div>
+
+      <div id="panel-link" role="tabpanel" aria-labelledby="tab-link" class="panel" hidden>
+        <form id="link-form">
+          <label for="sheet-url">Google Sheets link</label>
+          <input type="url" id="sheet-url" name="sheet_url" inputmode="url"
+                 placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0"
+                 autocomplete="off" spellcheck="false">
+          <p class="muted">Paste the link from your browser's address bar, or from
+            <strong>Share → Copy link</strong>. We read the tab the link points at.</p>
+          <button class="btn primary" id="link-submit" type="submit">Import orders</button>
+        </form>
+      </div>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </section>
+  </div>
+
+  <section class="converge-note" aria-label="Shared checkout flow">
+    <strong>One finish, whichever way you start</strong>
+    <span>Review and correct every drink → build one cart → continue to Kung Fu Tea to pay.</span>
   </section>
 
   <p class="footnote">Nothing is ordered or paid for here. The last step hands you a normal

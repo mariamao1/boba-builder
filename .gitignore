@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .runs/
 .group-orders/
+.saved-orders/
+.menu-cache/

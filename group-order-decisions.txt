@@ -90,3 +90,17 @@ Finalization and handoff
   early does not strand valid submissions.
 - Finalized run URLs are returned only by the authenticated organizer endpoint,
   not by the public participant room response.
+
+Store selection
+---------------
+- The organizer chooses a visible takeout location from Kung Fu Tea's full
+  store directory before creating a room. The selected restaurant id and
+  display name are immutable room fields.
+- Participants load the menu for that room's restaurant id. Finalization copies
+  the same id into the saved run, so option normalization, preview matching,
+  live-menu refresh, cart creation, and the Kung Fu Tea handoff cannot silently
+  switch locations.
+- `GET /api/stores` caches the live directory for six hours. Creating a room
+  fetches and normalizes an uncached selected menu into `.menu-cache/`; bundled
+  snapshots are offline fallbacks. A room cannot be created for an unknown id,
+  and browser-supplied store names are never trusted.

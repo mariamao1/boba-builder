@@ -138,8 +138,9 @@ function renderRoom() {
   if (!session) return;
   document.title = `${session.title} — organizer — Boba Builder`;
   elements.roomTitle.textContent = session.title;
-  elements.roomSubtitle.textContent = session.organizer_name
+  const host = session.organizer_name
     ? `Hosted by ${session.organizer_name}` : 'Organizer view';
+  elements.roomSubtitle.textContent = session.store_name ? `${host} · ${session.store_name}` : host;
   elements.openParticipant.href = `/group-order/${encodeURIComponent(roomId)}`;
 
   const labels = {

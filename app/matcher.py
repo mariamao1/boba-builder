@@ -395,7 +395,8 @@ def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
     """
     # `is None`, not `or`: an empty menu is falsy and must stay the one we were
     # handed, so "there is no snapshot" is reported rather than papered over.
-    store = menu_module.store_menu() if store is None else store
+    restaurant_id = (run.get("source") or {}).get("restaurant_id")
+    store = menu_module.store_menu(restaurant_id) if store is None else store
     config = store.config
     matcher = RowMatcher(store, config, run.get("column_map"))
 
@@ -455,7 +456,7 @@ def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
             f"{'' if unmatched != 1 else 's'} picking from the menu before the cart "
             f"can be built", "drink", None, f"{PREFIX}unmatched").as_dict())
 
-    captured = menu_module.captured_at()
+    captured = menu_module.captured_at(store.restaurant_id)
     age = (_dt.date.today() - captured).days if captured else None
     if age is not None and age > config.menu_stale_days:
         # Task 1 §6: options are addressed by name, so a rename breaks the cart

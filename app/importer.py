@@ -1,4 +1,4 @@
-"""Bytes or a link in, a structured order list out.
+"""Spreadsheet bytes, a Sheets link, or structured rows in; one order list out.
 
 The data path, end to end: sniff the format, decode it, find the table, hand the
 rows to schema.parse_table for structure, then to options.annotate to resolve
@@ -117,7 +117,8 @@ def read_csv_rows(text: str) -> tuple[list[list[str]], str]:
     return rows, delimiter
 
 
-def parse_and_resolve(rows: list[list]) -> tuple[list[OrderRow], dict, list[Issue]]:
+def parse_and_resolve(rows: list[list], option_set: options.StoreOptions | None = None
+                      ) -> tuple[list[OrderRow], dict, list[Issue]]:
     """The two halves of parsing, in order: structure, then vocabulary.
 
     schema.parse_table finds the table and cleans it up; options.annotate maps
@@ -127,7 +128,7 @@ def parse_and_resolve(rows: list[list]) -> tuple[list[OrderRow], dict, list[Issu
     """
     order_rows, column_map, issues = parse_table(rows)
     if order_rows:
-        issues = issues + options.annotate(order_rows)
+        issues = issues + options.annotate(order_rows, option_set)
     return order_rows, column_map, issues
 
 
@@ -309,13 +310,15 @@ def apply_row_edit(run: dict, row_number: int, changes: dict) -> dict:
             message += " — this row was blank"
         target.issues.append(Issue("info", message, field, row_number, code))
 
-    options.resolve_row(target)
+    restaurant_id = (run.get("source") or {}).get("restaurant_id")
+    option_set = options.store_options(restaurant_id)
+    options.resolve_row(target, option_set)
 
     # The sheet-level tally has to be recomputed, not patched: fixing one row
     # can take the count to zero and the note has to disappear with it.
     issues = [Issue.from_dict(entry) for entry in run.get("issues") or []
               if entry.get("code") not in options.SUMMARY_CODES]
-    issues += options.summarise(rows)
+    issues += options.summarise(rows, option_set)
 
     result = ImportResult(rows=rows, column_map=run.get("column_map") or {},
                           issues=issues, source=run.get("source") or {})
@@ -324,11 +327,12 @@ def apply_row_edit(run: dict, row_number: int, changes: dict) -> dict:
     return updated
 
 
-def import_json(payload: str) -> ImportResult:
+def import_json(payload: str, *, restaurant_id: str | None = None) -> ImportResult:
     """Accept an already-parsed table (list of dicts or list of lists) as JSON.
 
-    Not used by the page; it exists so Tasks 3-5 and the tests can feed the same
-    normaliser without inventing a spreadsheet.
+    Group-order finalization uses this entry point so its submitted lines pass
+    through the same normalizer as spreadsheet rows. Tests and other callers
+    can also use it without inventing a spreadsheet file.
     """
     data = json.loads(payload)
     if isinstance(data, dict):
@@ -338,6 +342,7 @@ def import_json(payload: str) -> ImportResult:
         rows = [headers] + [[row.get(header, "") for header in headers] for row in data]
     else:
         rows = [list(row) for row in data]
-    order_rows, column_map, issues = parse_and_resolve(rows)
+    order_rows, column_map, issues = parse_and_resolve(
+        rows, options.store_options(restaurant_id))
     return ImportResult(rows=order_rows, column_map=column_map, issues=issues,
                         source={"kind": "json", "format": "json"})

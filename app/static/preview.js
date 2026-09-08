@@ -72,6 +72,37 @@ function issueList(issues) {
 
 const money = (value) => `$${Number(value || 0).toFixed(2)}`;
 
+const SAVED_ORDERS_KEY = 'boba-builder:saved-orders-token';
+
+function savedOrdersToken() {
+  const stores = [];
+  ['localStorage', 'sessionStorage'].forEach((name) => {
+    try { if (window[name]) stores.push(window[name]); } catch (error) { /* unavailable */ }
+  });
+  for (const store of stores) {
+    try {
+      const found = store.getItem(SAVED_ORDERS_KEY);
+      if (/^[A-Za-z0-9_-]{20,128}$/.test(found || '')) return found;
+    } catch (error) { /* private browsing may deny storage */ }
+  }
+  let token = '';
+  if (window.crypto && window.crypto.randomUUID) {
+    token = window.crypto.randomUUID().replace(/-/g, '') + window.crypto.randomUUID().replace(/-/g, '');
+  } else if (window.crypto && window.crypto.getRandomValues) {
+    const bytes = new Uint8Array(32);
+    window.crypto.getRandomValues(bytes);
+    token = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  } else {
+    token = `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
+      + Math.random().toString(36).slice(2);
+    token = token.padEnd(32, 'x').slice(0, 64);
+  }
+  for (const store of stores) {
+    try { store.setItem(SAVED_ORDERS_KEY, token); return token; } catch (error) { /* try next */ }
+  }
+  return token;
+}
+
 /* One option cell: what we resolved it to, and what the sheet said if that
    differs. A value we couldn't place is shown as typed and underlined, never
    blanked — the whole point is that the row still reaches the person.
@@ -248,7 +279,12 @@ function searchBox({ key, value, placeholder, label, list, action, onPick }) {
       timer = window.setTimeout(async () => {
         const mine = ++latest;
         try {
-          const response = await fetch(`/api/drinks?q=${encodeURIComponent(text)}&limit=6`);
+          const restaurantId = currentRun && currentRun.source
+            ? currentRun.source.restaurant_id : '';
+          const storeQuery = restaurantId
+            ? `&restaurant_id=${encodeURIComponent(restaurantId)}` : '';
+          const response = await fetch(
+            `/api/drinks?q=${encodeURIComponent(text)}&limit=6${storeQuery}`);
           const data = await response.json();
           if (mine === latest) fill(data.drinks || []);
         } catch (error) {
@@ -559,7 +595,26 @@ function sourceText(source) {
   if (!source) return 'your sheet';
   if (source.kind === 'google_sheet') return 'your Google Sheet';
   if (source.kind === 'group_order') return 'your group order';
+  if (source.kind === 'saved_order') return `saved order “${source.label || 'Boba order'}”`;
   return source.filename ? `"${source.filename}"` : 'your file';
+}
+
+function sourceOrigin(source) {
+  if (source && source.kind === 'group_order' && source.session_id) {
+    return {
+      href: `/group-order/${encodeURIComponent(source.session_id)}/organizer`,
+      backText: '← Back to organizer',
+      stepText: 'Collect group order',
+    };
+  }
+  if (source && source.kind === 'saved_order' && source.saved_order_id) {
+    return {
+      href: `/saved-orders/${encodeURIComponent(source.saved_order_id)}`,
+      backText: '← Back to saved order',
+      stepText: 'Repeat saved order',
+    };
+  }
+  return { href: '/?method=sheet', backText: '← Back to import', stepText: 'Import sheet' };
 }
 
 function rowNeedsAttention(row) {
@@ -580,11 +635,14 @@ function updateSteps(run) {
   const check = document.getElementById('step-check');
   const cart = document.getElementById('step-cart');
   const back = document.getElementById('preview-back');
+  const sourceStep = document.getElementById('step-source-label');
+  const origin = sourceOrigin(run.source);
   if (check) check.className = handedOff ? 'done' : 'on';
   if (cart) cart.className = handedOff ? 'on' : '';
+  if (sourceStep) sourceStep.textContent = origin.stepText;
   if (back) {
-    back.href = handedOff ? '#check-order' : '/';
-    back.textContent = handedOff ? '← Back to check order' : '← Back to import';
+    back.href = handedOff ? '#check-order' : origin.href;
+    back.textContent = handedOff ? '← Back to check order' : origin.backText;
   }
 }
 
@@ -616,18 +674,20 @@ function render(run, stages, openCartView) {
 
   /* --- anything that stops us -------------------------------------------- */
   if (fatal) {
-    const problem = card('That sheet didn\'t come through');
+    const origin = sourceOrigin(run.source);
+    const problem = card('Those orders didn\'t come through');
     problem.append(issueList((run.issues || []).filter((i) => i.level === 'error')));
     problem.append(el('p', 'muted',
-      'The sheet needs a row of column titles with at least Name and Drink, and one row '
-      + 'per drink underneath. The template on the import page is already set up that way.'));
+      'Each order needs a name and a drink before it can continue to cart review.'));
     const actions = el('div', 'actions');
-    const back = el('a', 'btn primary', 'Back to import');
-    back.href = '/';
+    const back = el('a', 'btn primary', origin.backText.replace(/^← /, ''));
+    back.href = origin.href;
     actions.append(back);
-    const template = el('a', 'btn', 'Download the template');
-    template.href = '/template.csv';
-    actions.append(template);
+    if (!run.source || run.source.kind !== 'group_order') {
+      const template = el('a', 'btn', 'Download the template');
+      template.href = '/template.csv';
+      actions.append(template);
+    }
     problem.append(actions);
     return;
   }
@@ -646,11 +706,11 @@ function render(run, stages, openCartView) {
   const tiles = [
     [String(stats.drinks || 0), 'requested drinks'],
     [String(stats.people || 0), 'people'],
-    [String(stats.rows || 0), 'rows read'],
+    [String(stats.rows || 0), 'order lines'],
   ];
   if (matched) {
     tiles.push([String(matched.drinks || 0), 'mapped drinks']);
-    tiles.push([`${matched.ready || 0}/${(run.rows || []).length}`, 'rows ready']);
+    tiles.push([`${matched.ready || 0}/${(run.rows || []).length}`, 'lines ready']);
     tiles.push([money(matched.subtotal), 'estimated subtotal']);
     tiles.push([String(matched.needs_attention || 0), 'need attention']);
   } else {
@@ -938,6 +998,80 @@ function showCartResult(outcome, run) {
   return true;
 }
 
+function defaultSavedOrderLabel(run) {
+  const source = run.source || {};
+  if (source.title) return source.title;
+  if (source.label) return source.label;
+  if (source.filename) return source.filename.replace(/\.[^.]+$/, '');
+  return 'Boba order';
+}
+
+function saveFinishedOrder(run) {
+  const section = el('section', 'save-finished');
+  section.append(el('h3', null, 'Save this finished order'));
+  section.append(el('p', 'muted',
+    'Saved Orders are private to this browser. The finished cart snapshot stays available '
+    + 'after the temporary working order expires.'));
+
+  const form = el('form', 'save-order-form');
+  const name = el('input', 'cell-input');
+  name.type = 'text';
+  name.required = true;
+  name.maxLength = 120;
+  name.value = defaultSavedOrderLabel(run);
+  name.setAttribute('aria-label', 'Saved order name');
+
+  const date = el('input', 'cell-input');
+  date.type = 'date';
+  date.required = true;
+  date.value = new Date().toISOString().slice(0, 10);
+  date.setAttribute('aria-label', 'Order date');
+
+  const save = el('button', 'btn primary', 'Save order');
+  save.type = 'submit';
+  const feedback = el('div', 'save-feedback');
+
+  form.append(field('Name', name), field('Date', date), save);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const label = name.value.trim();
+    if (!label) {
+      feedback.className = 'save-feedback error';
+      feedback.textContent = 'Give this order a name first.';
+      name.focus();
+      return;
+    }
+    save.disabled = true;
+    feedback.className = 'save-feedback';
+    feedback.textContent = 'Saving…';
+    try {
+      const response = await fetch('/api/saved-orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Saved-Orders-Token': savedOrdersToken(),
+        },
+        body: JSON.stringify({run_id: runId, label, order_date: date.value}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'That order could not be saved.');
+      form.textContent = '';
+      form.className = 'save-order-form saved';
+      const done = el('strong', null, 'Saved.');
+      const link = el('a', 'btn', 'View saved order');
+      link.href = data.saved_order_url;
+      form.append(done, link);
+      feedback.textContent = 'You can revisit, export, or repeat it from Saved Orders.';
+    } catch (error) {
+      feedback.className = 'save-feedback error';
+      feedback.textContent = error.message;
+      save.disabled = false;
+    }
+  });
+  section.append(form, feedback);
+  return section;
+}
+
 function renderNextStep(run, stages) {
   const built = run.cart && run.cart.review_ready;
   const viewingCart = showingCart && Boolean(run.cart || run.handoff_url);
@@ -969,7 +1103,10 @@ function renderNextStep(run, stages) {
   const outcome = el('div', 'status');
   outcome.style.marginTop = '1rem';
   next.append(outcome);
-  if (viewingCart) showCartResult(outcome, run);
+  if (viewingCart) {
+    showCartResult(outcome, run);
+    if (run.cart && run.cart.review_ready) next.append(saveFinishedOrder(run));
+  }
 
   if (stages && stages.length) {
     const list = el('ul', 'stage-list');
@@ -1011,7 +1148,7 @@ function renderNextStep(run, stages) {
         spot.append(el('strong', null, 'Your order is matched and waiting.'));
         spot.append(document.createTextNode(
           `The next step (${pending.length ? pending[0].description.toLowerCase() : 'the cart builder'}) `
-          + 'isn\'t built yet. Nothing was lost — this import is saved and will flow straight '
+          + 'isn\'t built yet. Nothing was lost — this order is saved and will flow straight '
           + 'through once it lands.'));
       } else {
         outcome.className = 'status err';
@@ -1036,9 +1173,9 @@ fetch(`/api/runs/${runId}`)
   })
   .catch((error) => {
     body.textContent = '';
-    const section = card('That import isn\'t here any more');
+    const section = card('That saved order isn\'t here any more');
     section.append(el('p', 'muted', error.message));
-    const back = el('a', 'btn primary', 'Back to import');
+    const back = el('a', 'btn primary', 'Back to start');
     back.href = '/';
     section.append(back);
   });

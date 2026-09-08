@@ -22,9 +22,9 @@ FALLBACK_ROWS = [
     ["Chen", "Winter Melon Tea", "Large", "30%", "No ice", "Boba, Pudding", "Soy milk", ""],
 ]
 
-def _load_menu() -> dict | None:
+def _load_menu(restaurant_id: str | None = None) -> dict | None:
     """The raw snapshot, or None. app/menu.py owns the loading and the cache."""
-    return menu.snapshot() or None
+    return menu.snapshot(restaurant_id) or None
 
 
 def _options(item: dict, axis: str) -> list[str]:
@@ -42,9 +42,9 @@ def _canonical_labels(item: dict, axis: str) -> list[str]:
     return []
 
 
-def menu_hints() -> dict:
+def menu_hints(restaurant_id: str | None = None) -> dict:
     """What to tell the user they can type, drawn from the live snapshot."""
-    snapshot = _load_menu()
+    snapshot = _load_menu(restaurant_id)
     if not snapshot:
         return {
             "store": None,
@@ -76,7 +76,7 @@ def menu_hints() -> dict:
 
     drinks = sorted({item["name"] for item in items})
 
-    captured = menu.captured_at()
+    captured = menu.captured_at(restaurant_id)
     return {
         "store": snapshot.get("restaurant_name") or (snapshot.get("store") or {}).get("name"),
         "restaurant_id": snapshot.get("restaurant_id"),

@@ -22,7 +22,7 @@ import secrets
 import threading
 from pathlib import Path
 
-from . import importer, runs
+from . import importer, menu, runs
 
 SESSION_DIR = Path(os.environ.get(
     "BOBA_GROUP_ORDER_DIR",
@@ -280,10 +280,14 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
     current = _as_utc(now)
     orders = [_public_order(order) for order in room.get("orders") or []]
     status = _effective_status(room, current)
+    restaurant_id = room.get("restaurant_id") or menu.TARGET_STORE
+    store = menu.store_summary(restaurant_id)
     return {
         "id": room["id"],
         "title": room["title"],
         "organizer_name": room["organizer_name"],
+        "restaurant_id": restaurant_id,
+        "store_name": room.get("store_name") or ((store or {}).get("name")),
         "status": status,
         "accepting_orders": status == "open",
         "created_at": room["created_at"],
@@ -297,6 +301,7 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
 
 
 def create(*, title: str = "", organizer_name: str = "",
+           restaurant_id: str | None = None,
            expires_in_hours: float = DEFAULT_TTL_HOURS,
            now: dt.datetime | None = None) -> tuple[dict, str]:
     """Create a room and return ``(public_room, organizer_token)``."""
@@ -305,6 +310,10 @@ def create(*, title: str = "", organizer_name: str = "",
     title = _clean_string(title, "title")
     if not title:
         title = f"{organizer_name}'s boba order" if organizer_name else "Boba group order"
+    restaurant_id = restaurant_id or menu.TARGET_STORE
+    store = menu.store_summary(restaurant_id)
+    if store is None:
+        raise GroupOrderError("choose an available Kung Fu Tea store")
     try:
         ttl = float(expires_in_hours)
     except (TypeError, ValueError) as exc:
@@ -316,10 +325,12 @@ def create(*, title: str = "", organizer_name: str = "",
     organizer_token = secrets.token_urlsafe(32)
     created_at = _timestamp(current)
     room = {
-        "version": 1,
+        "version": 2,
         "id": room_id,
         "title": title,
         "organizer_name": organizer_name,
+        "restaurant_id": restaurant_id,
+        "store_name": store["name"],
         "status": "open",
         "created_at": created_at,
         "updated_at": created_at,
@@ -479,12 +490,16 @@ def finalize(room_id: str, organizer_token: str | None, *,
              for field in fields}
             for order in orders
         ]
-        result = importer.import_json(json.dumps({"rows": rows_payload}))
+        restaurant_id = room.get("restaurant_id") or menu.TARGET_STORE
+        result = importer.import_json(
+            json.dumps({"rows": rows_payload}), restaurant_id=restaurant_id)
         finalized_at = _timestamp(current)
         result.source = {
             "kind": "group_order",
             "session_id": room_id,
             "title": room["title"],
+            "restaurant_id": restaurant_id,
+            "store": room.get("store_name") or (menu.store_summary(restaurant_id) or {}).get("name"),
             "finalized_at": finalized_at,
         }
         run_id = runs.new_id()

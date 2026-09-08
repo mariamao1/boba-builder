@@ -33,31 +33,51 @@ import datetime as _dt
 import difflib
 import functools
 import json
+import os
 import re
+import threading
+import time
 from pathlib import Path
 
 from . import mapping
+from scripts import kft_api
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+MENU_CACHE_DIR = Path(os.environ.get(
+    "BOBA_MENU_CACHE_DIR", Path(__file__).resolve().parent.parent / ".menu-cache"))
 TARGET_STORE = "650c9c3cd73592bc0e0bd50a"  # 5th Ave, Bk — Task 1's target store
+_STORE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+STORE_DIRECTORY_TTL_SECONDS = 6 * 60 * 60
+_cache_lock = threading.RLock()
 
 # Same rule as scripts/fetch_menu.py: a trailing number on a size name is the
 # upcharge, not part of the name — but only when it matches the option's price.
 _SIZE_SUFFIX = re.compile(r"^(?P<base>.*?)\s*(?P<amount>\d*\.?\d+)$")
 
 
-def snapshot_path() -> Path | None:
-    path = DATA_DIR / f"menu-{TARGET_STORE}.json"
+def snapshot_path(restaurant_id: str | None = None) -> Path | None:
+    """The captured menu for one store, without allowing arbitrary paths."""
+    explicit = restaurant_id is not None
+    selected = restaurant_id or TARGET_STORE
+    if not isinstance(selected, str) or not _STORE_ID.fullmatch(selected):
+        return None
+    path = DATA_DIR / f"menu-{selected}.json"
     if path.exists():
         return path
-    candidates = sorted(DATA_DIR.glob("menu-*.json"))
+    cached = MENU_CACHE_DIR / f"menu-{selected}.json"
+    if cached.exists():
+        return cached
+    if explicit:
+        return None
+    candidates = sorted(DATA_DIR.glob("menu-*.json")) + sorted(
+        MENU_CACHE_DIR.glob("menu-*.json"))
     return candidates[0] if candidates else None
 
 
-@functools.lru_cache(maxsize=1)
-def snapshot() -> dict:
+@functools.lru_cache(maxsize=16)
+def snapshot(restaurant_id: str | None = None) -> dict:
     """The raw menu capture. `{}` when there isn't one — never an exception."""
-    path = snapshot_path()
+    path = snapshot_path(restaurant_id)
     if path is None:
         return {}
     try:
@@ -66,19 +86,169 @@ def snapshot() -> dict:
         return {}
 
 
-def captured_at() -> _dt.date | None:
+def captured_at(restaurant_id: str | None = None) -> _dt.date | None:
     """When the snapshot was taken, from the file's own timestamp.
 
     The capture doesn't record a date inside itself, and the mtime is close
     enough for the only question anyone asks of it: is this too old to trust?
     """
-    path = snapshot_path()
+    path = snapshot_path(restaurant_id)
     if path is None:
         return None
     try:
         return _dt.date.fromtimestamp(path.stat().st_mtime)
     except OSError:
         return None
+
+
+@functools.lru_cache(maxsize=1)
+def available_stores() -> list[dict]:
+    """Captured stores that can safely back preview and cart construction."""
+    stores: dict[str, dict] = {}
+    paths = sorted(DATA_DIR.glob("menu-*.json")) + sorted(
+        MENU_CACHE_DIR.glob("menu-*.json"))
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        restaurant_id = data.get("restaurant_id")
+        if (not isinstance(restaurant_id, str)
+                or not _STORE_ID.fullmatch(restaurant_id)
+                or path.name != f"menu-{restaurant_id}.json"):
+            continue
+        location = data.get("store") or {}
+        stores.setdefault(restaurant_id, {
+            "restaurant_id": restaurant_id,
+            "name": data.get("restaurant_name") or restaurant_id,
+            "address": location.get("address"),
+            "city": location.get("city"),
+            "state": location.get("state"),
+            "zip": location.get("zip"),
+            "item_count": int(data.get("item_count") or len(data.get("items") or [])),
+        })
+    return sorted(stores.values(), key=lambda store: (
+        store["restaurant_id"] != TARGET_STORE,
+        store["name"].casefold(),
+    ))
+
+
+def store_summary(restaurant_id: str | None) -> dict | None:
+    """Public metadata for a captured store, or None when it is unavailable."""
+    return next((dict(store) for store in available_stores()
+                 if store["restaurant_id"] == restaurant_id), None)
+
+
+class StoreMenuUnavailable(ValueError):
+    """The selected store or its live menu cannot be prepared safely."""
+
+
+def _normal_store(record: dict) -> dict | None:
+    restaurant_id = record.get("id") or record.get("restaurant_id")
+    if not isinstance(restaurant_id, str) or not _STORE_ID.fullmatch(restaurant_id):
+        return None
+    if record.get("hide_from_picker") or record.get("takeout") is False:
+        return None
+    return {
+        "restaurant_id": restaurant_id,
+        "name": record.get("name") or restaurant_id,
+        "address": record.get("address"),
+        "city": record.get("city"),
+        "state": record.get("state"),
+        "zip": record.get("zip"),
+        "item_count": record.get("item_count"),
+    }
+
+
+def _read_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_json(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+    temporary.replace(path)
+
+
+def store_directory(api=None, *, refresh: bool = False) -> list[dict]:
+    """All visible takeout stores, cached locally because the directory is large."""
+    explicit_api = api is not None
+    api = api or kft_api
+    directory_path = MENU_CACHE_DIR / "stores.json"
+    with _cache_lock:
+        cached = _read_json(directory_path)
+        fresh = (directory_path.exists()
+                 and time.time() - directory_path.stat().st_mtime < STORE_DIRECTORY_TTL_SECONDS)
+        if cached and fresh and not refresh and not explicit_api:
+            return cached
+        try:
+            records = api.list_stores()
+            stores = [store for record in records
+                      if (store := _normal_store(record)) is not None]
+            stores.sort(key=lambda store: (
+                (store.get("state") or "").casefold(),
+                (store.get("city") or "").casefold(),
+                store["name"].casefold(),
+            ))
+            if not explicit_api:
+                _write_json(directory_path, stores)
+            return stores
+        except Exception as exc:
+            if cached:
+                return cached
+            captured = available_stores()
+            if captured:
+                return captured
+            raise StoreMenuUnavailable(
+                f"could not load the Kung Fu Tea store directory: {exc}") from exc
+
+
+def ensure_snapshot(restaurant_id: str, api=None, store: dict | None = None) -> dict:
+    """Fetch and persist an uncaptured store menu for consistent room behavior."""
+    if not isinstance(restaurant_id, str) or not _STORE_ID.fullmatch(restaurant_id):
+        raise StoreMenuUnavailable("choose an available Kung Fu Tea store")
+    existing = snapshot(restaurant_id)
+    if existing:
+        return existing
+    api = api or kft_api
+    with _cache_lock:
+        path = snapshot_path(restaurant_id)
+        if path:
+            existing = _read_json(path)
+            if existing:
+                return existing
+        try:
+            raw = api.get_menu(restaurant_id)
+        except Exception as exc:
+            raise StoreMenuUnavailable(f"could not load that store's menu: {exc}") from exc
+        captured = live_snapshot(raw, restaurant_id)
+        if store:
+            captured["store"] = {
+                key: store.get(key) for key in ("name", "address", "city", "state", "zip")
+            }
+        _write_json(MENU_CACHE_DIR / f"menu-{restaurant_id}.json", captured)
+        snapshot.cache_clear()
+        available_stores.cache_clear()
+        store_menu.cache_clear()
+        participant_menu.cache_clear()
+        return captured
+
+
+def prepare_store(restaurant_id: str) -> dict:
+    """Validate a picker choice and make its menu available to the app."""
+    captured = store_summary(restaurant_id)
+    if captured and snapshot(restaurant_id):
+        return captured
+    store = next((entry for entry in store_directory()
+                  if entry["restaurant_id"] == restaurant_id), None)
+    if store is None:
+        raise StoreMenuUnavailable("choose an available Kung Fu Tea store")
+    ensure_snapshot(restaurant_id, store=store)
+    return store_summary(restaurant_id) or store
 
 
 def size_label(name: str, price=None) -> str:
@@ -151,11 +321,19 @@ def live_snapshot(raw: dict, restaurant_id: str) -> dict:
             "option_groups": [group(value) for value in entry.get("option_groups") or []],
         }
 
+    categories = []
+    for node in raw.get("hierarchy") or []:
+        for child in node.get("contents") or []:
+            if child.get("type") == "category":
+                categories.append({"id": child.get("id"), "name": child.get("name")})
+    items = [item(value) for value in raw.get("menu") or []]
     return {
         "restaurant_id": restaurant_id,
         "restaurant_name": raw.get("name") or "",
         "can_order_now": raw.get("can_order"),
-        "items": [item(value) for value in raw.get("menu") or []],
+        "category_order": categories,
+        "item_count": len(items),
+        "items": items,
     }
 
 
@@ -524,14 +702,14 @@ class StoreMenu:
         return [name for _score, name in scored[:limit]]
 
 
-@functools.lru_cache(maxsize=1)
-def store_menu() -> StoreMenu:
-    """The target store's menu. Cached — the snapshot doesn't change under us."""
-    return StoreMenu(snapshot(), mapping.load())
+@functools.lru_cache(maxsize=16)
+def store_menu(restaurant_id: str | None = None) -> StoreMenu:
+    """One captured store's menu. The Task 1 target remains the default."""
+    return StoreMenu(snapshot(restaurant_id), mapping.load())
 
 
-@functools.lru_cache(maxsize=1)
-def participant_menu() -> dict:
+@functools.lru_cache(maxsize=16)
+def participant_menu(restaurant_id: str | None = None) -> dict:
     """The real, per-drink menu used by the shared order-entry page.
 
     This is intentionally different from ``template.menu_hints()``.  Hints are
@@ -540,8 +718,8 @@ def participant_menu() -> dict:
     canonical labels the rest of Boba Builder understands (``Large``, ``50%``)
     while ``store_value`` preserves the ordering site's literal when it differs.
     """
-    data = snapshot()
-    store = store_menu()
+    data = snapshot(restaurant_id)
+    store = store_menu(restaurant_id)
     if not data or not store:
         return {
             "store": None,
@@ -609,7 +787,7 @@ def participant_menu() -> dict:
         if name and name in available_categories and name not in categories:
             categories.append(name)
 
-    captured = captured_at()
+    captured = captured_at(store.restaurant_id)
     return {
         "store": store.store,
         "restaurant_id": store.restaurant_id,
@@ -622,6 +800,7 @@ def participant_menu() -> dict:
 
 def reload() -> StoreMenu:
     snapshot.cache_clear()
+    available_stores.cache_clear()
     store_menu.cache_clear()
     participant_menu.cache_clear()
     return store_menu()

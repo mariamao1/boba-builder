@@ -12,8 +12,9 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
-from app import group_orders, menu, runs, server
+from app import group_orders, importer, menu, pipeline, runs, server
 
 
 ORDER = {
@@ -25,6 +26,7 @@ ORDER = {
     "toppings": ["Boba"],
     "quantity": 1,
 }
+ALTERNATE_STORE = "650c9c52d73592bc0e0bd5a7"
 
 
 class GroupOrderStoreTests(unittest.TestCase):
@@ -72,6 +74,17 @@ class GroupOrderStoreTests(unittest.TestCase):
         })
         self.assertNotIn(first_token, json.dumps(aggregate))
         self.assertEqual(aggregate["orders"][0]["toppings"], ["Boba"])
+
+    def test_create_pins_an_available_store_to_the_room(self):
+        room, _organizer_token = group_orders.create(restaurant_id=ALTERNATE_STORE)
+
+        self.assertEqual(room["restaurant_id"], ALTERNATE_STORE)
+        self.assertIn("Washington Ave", room["store_name"])
+        saved = json.loads(group_orders.path_for(room["id"]).read_text(encoding="utf-8"))
+        self.assertEqual(saved["restaurant_id"], ALTERNATE_STORE)
+
+        with self.assertRaises(group_orders.GroupOrderError):
+            group_orders.create(restaurant_id="not-a-captured-store")
 
     def test_contributor_can_edit_and_organizer_can_remove_an_order(self):
         room, organizer_token = group_orders.create()
@@ -131,12 +144,57 @@ class GroupOrderStoreTests(unittest.TestCase):
         self.assertEqual(repeated_id, run_id)
         self.assertEqual(repeated["preview_url"], finalized["preview_url"])
 
+    def test_sheet_and_group_link_orders_share_the_same_downstream_shape(self):
+        sheet = importer.import_bytes(
+            b"Name,Drink,Size,Sugar,Ice,Toppings,Milk,Temperature,Qty,Notes\n"
+            b"Alice,Taro Slush,Large,50%,Less Ice,Boba,,,1,\n",
+            "orders.csv",
+        )
+        room, organizer_token = group_orders.create()
+        group_orders.add_order(room["id"], ORDER)
+        _finalized, run_id = group_orders.finalize(room["id"], organizer_token)
+
+        sheet_row = pipeline.enrich(sheet.as_dict())["rows"][0]
+        group_row = pipeline.enrich(runs.load(run_id))["rows"][0]
+        comparable = (
+            "person", "drink", "size", "sugar", "ice", "milk", "temperature",
+            "toppings", "quantity", "notes", "canonical", "issues", "ok", "match",
+        )
+        self.assertEqual(
+            {key: sheet_row[key] for key in comparable},
+            {key: group_row[key] for key in comparable},
+        )
+        self.assertEqual(sheet.source["kind"], "upload")
+        self.assertEqual(runs.load(run_id)["source"]["kind"], "group_order")
+
     def test_finalize_requires_an_order_and_the_organizer_token(self):
         room, organizer_token = group_orders.create()
         with self.assertRaises(group_orders.Forbidden):
             group_orders.finalize(room["id"], "wrong")
         with self.assertRaises(group_orders.EmptyRoom):
             group_orders.finalize(room["id"], organizer_token)
+
+    def test_selected_store_drives_final_matching_and_cart_destination(self):
+        room, organizer_token = group_orders.create(restaurant_id=ALTERNATE_STORE)
+        group_orders.add_order(room["id"], ORDER)
+
+        _finalized, run_id = group_orders.finalize(room["id"], organizer_token)
+        run = pipeline.enrich(runs.load(run_id))
+        washington_taro = next(
+            item for item in menu.participant_menu(ALTERNATE_STORE)["items"]
+            if item["name"] == "Taro Slush"
+        )
+
+        self.assertEqual(run["source"]["restaurant_id"], ALTERNATE_STORE)
+        self.assertEqual(run["match"]["restaurant_id"], ALTERNATE_STORE)
+        self.assertEqual(run["rows"][0]["match"]["item"]["id"], washington_taro["id"])
+        self.assertEqual(run["rows"][0]["match"]["item"]["price"], 5.75)
+
+        edited = importer.apply_row_edit(
+            runs.load(run_id), run["rows"][0]["row_number"], {"drink": "Apple Black Tea"})
+        edited = pipeline.enrich(edited)
+        self.assertEqual(edited["rows"][0]["canonical"]["drink"], "Apple Black Tea")
+        self.assertEqual(edited["rows"][0]["match"]["item"]["name"], "Apple Black Tea")
 
     def test_lock_reopen_close_and_expiry_are_enforced(self):
         now = dt.datetime(2026, 8, 31, 12, 0, tzinfo=dt.timezone.utc)
@@ -207,6 +265,34 @@ class GroupOrderStoreTests(unittest.TestCase):
 
 
 class ParticipantMenuTests(unittest.TestCase):
+    def test_every_captured_store_has_its_own_participant_menu(self):
+        stores = menu.available_stores()
+        self.assertTrue(
+            {menu.TARGET_STORE, ALTERNATE_STORE}.issubset(
+                {store["restaurant_id"] for store in stores}))
+        alternate = menu.participant_menu(ALTERNATE_STORE)
+        taro = next(item for item in alternate["items"] if item["name"] == "Taro Slush")
+        self.assertEqual(alternate["restaurant_id"], ALTERNATE_STORE)
+        self.assertIn("Washington Ave", alternate["store"])
+        self.assertEqual(taro["price"], 5.75)
+
+    def test_live_store_directory_filters_hidden_and_non_takeout_locations(self):
+        class FakeDirectoryApi:
+            @staticmethod
+            def list_stores():
+                return [
+                    {"id": "visible", "name": "Visible", "city": "Boston",
+                     "state": "MA", "takeout": True},
+                    {"id": "hidden", "name": "Hidden", "hide_from_picker": True,
+                     "takeout": True},
+                    {"id": "delivery", "name": "Delivery", "takeout": False},
+                ]
+
+        self.assertEqual(menu.store_directory(api=FakeDirectoryApi()), [{
+            "restaurant_id": "visible", "name": "Visible", "address": None,
+            "city": "Boston", "state": "MA", "zip": None, "item_count": None,
+        }])
+
     def test_menu_contains_only_real_per_drink_choices(self):
         payload = menu.participant_menu()
         self.assertEqual(payload["item_count"], len(payload["items"]))
@@ -266,10 +352,13 @@ class GroupOrderHttpTests(unittest.TestCase):
     def test_room_lifecycle_over_http(self):
         status, created = self.request("POST", "/api/group-orders", {
             "title": "Monday tea", "organizer_name": "Mariam", "expires_in_hours": 2,
+            "restaurant_id": ALTERNATE_STORE,
         })
         self.assertEqual(status, 201)
         room_id = created["session_id"]
         organizer_token = created["organizer_token"]
+        self.assertEqual(created["session"]["restaurant_id"], ALTERNATE_STORE)
+        self.assertIn("Washington Ave", created["session"]["store_name"])
         self.assertEqual(created["share_url"], f"/group-order/{room_id}")
         self.assertEqual(
             created["organizer_url"],
@@ -354,6 +443,7 @@ class GroupOrderHttpTests(unittest.TestCase):
             "/preview/", "/api/runs/"))
         self.assertEqual(status, 200)
         self.assertEqual(run_response["run"]["source"]["kind"], "group_order")
+        self.assertEqual(run_response["run"]["match"]["restaurant_id"], ALTERNATE_STORE)
 
     def test_bad_room_payloads_return_structured_errors(self):
         status, invalid = self.request(
@@ -367,13 +457,28 @@ class GroupOrderHttpTests(unittest.TestCase):
         self.assertEqual(missing["code"], "room_not_found")
 
     def test_participant_menu_endpoint_has_item_specific_options(self):
-        status, response = self.request("GET", "/api/menu")
+        directory = menu.available_stores()
+        with mock.patch.object(menu, "store_directory", return_value=directory):
+            status, stores = self.request("GET", "/api/stores")
         self.assertEqual(status, 200)
+        self.assertIn(ALTERNATE_STORE,
+                      {store["restaurant_id"] for store in stores["stores"]})
+
+        status, response = self.request(
+            "GET", f"/api/menu?restaurant_id={ALTERNATE_STORE}")
+        self.assertEqual(status, 200)
+        self.assertEqual(response["menu"]["restaurant_id"], ALTERNATE_STORE)
         taro = next(item for item in response["menu"]["items"]
                     if item["name"] == "Taro Slush")
         size = next(group for group in taro["option_groups"] if group["axis"] == "size")
         self.assertEqual([choice["label"] for choice in size["options"]],
                          ["Medium", "Large"])
+        self.assertEqual(taro["price"], 5.75)
+
+        status, missing = self.request(
+            "GET", "/api/menu?restaurant_id=not-a-captured-store")
+        self.assertEqual(status, 404)
+        self.assertFalse(missing["ok"])
 
 
 if __name__ == "__main__":

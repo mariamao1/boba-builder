@@ -11,10 +11,11 @@ Both downstream stages receive one dict, the saved run:
     {
       "run_id":     "9f2c...",              # hex, also the preview URL
       "created_at": 1755500000.0,
-      "source":     {"kind": "upload" | "google_sheet" | "json", ...},
+      "source":     {"kind": "upload" | "google_sheet" | "group_order" | "json",
+                     "restaurant_id": "650c...", ...},
       "column_map": {"Name": "Who's it for", ...},   # our field -> their header
       "stats":      {"rows": 8, "drinks": 9, "people": 7, ...},
-      "issues":     [{"level", "message", "field", "row"}, ...],   # sheet-level
+      "issues":     [{"level", "message", "field", "row"}, ...],   # order-level
       "rows": [
         {
           "row_number": 2,                  # the row in the user's sheet
@@ -105,7 +106,7 @@ import sys
 # when somebody presses the button.
 STAGES = [
     ("import", "app.importer", None,
-     "Read the sheet and resolve each row to the store's options", True),
+     "Normalize collected orders and resolve each row to the store's options", True),
     ("match", "app.matcher", "match", "Match each row to a live menu item", True),
     ("cart", "app.cart", "build", "Build the cart and produce the handoff link", False),
 ]

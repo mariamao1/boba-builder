@@ -1,7 +1,7 @@
 # Boba Builder
 
-Turn a group's order spreadsheet into one Kung Fu Tea cart, ready to pay for in
-your own browser.
+Collect a group's drinks with a shared link or import an existing spreadsheet,
+then turn them into one Kung Fu Tea cart ready to pay for in your own browser.
 
 ```
 python3 -m app.server          # http://127.0.0.1:8000
@@ -22,7 +22,7 @@ Python 3.11+, standard library only — nothing to install.
 | `data/mapping.json` | every synonym and alias, as data — edit this, not the code |
 | `scripts/kft_api.py` | client for the Kung Fu Tea ordering API (Task 1) |
 | `scripts/fetch_menu.py` | capture and normalise a store's menu |
-| `data/menu-*.json` | menu snapshots; `650c9c3cd73592bc0e0bd50a` is 5th Ave, Bk |
+| `data/menu-*.json` | bundled store menus; other selected locations are cached in `.menu-cache/` |
 | `data/sample-group-order.csv` | a realistic messy group order, for trying it out |
 | `docs/` | site/API notes, endpoint list, per-task design notes |
 | `task1-recommendation.txt` | the cart-handoff spike and its findings — read first |
@@ -44,6 +44,10 @@ Python 3.11+, standard library only — nothing to install.
       (`docs/task9-participant-order-entry.md`)
 - [x] **Task 10** — live organizer dashboard, moderation, and cart-pipeline handoff
       (`docs/task10-organizer-dashboard.md`)
+- [x] **Task 11** — one entry point for spreadsheet and group-link flows
+      (`docs/task11-unified-flow.md`)
+- [x] **Task 12** — browser-scoped finished-order archive, detail, export, and repeat
+      (`docs/task12-saved-orders.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.
@@ -55,7 +59,7 @@ python3 -m unittest discover -s tests -t .
 python3 -m app.mapping        # does the vocabulary still match the live menu?
 ```
 
-27 of those drive the preview page's own JavaScript through a small DOM shim, to
+32 of those drive the browser pages' own JavaScript through a small DOM shim, to
 catch the wiring bugs Python can't see. They need a JavaScript engine on the
 machine — macOS ships one — and skip themselves when there isn't one.
 

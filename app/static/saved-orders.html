@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boba Builder — Saved Orders</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <h1><span class="cup" aria-hidden="true"></span> Boba Builder</h1>
+    <p class="tagline" id="saved-subtitle">Finished group orders saved in this browser.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <nav class="back-row top-links" aria-label="Order navigation">
+    <a class="btn ghost" id="saved-back" href="/">← Back to start</a>
+  </nav>
+  <div id="saved-body" aria-live="polite">
+    <section class="card"><p class="muted">Loading saved orders…</p></section>
+  </div>
+</main>
+
+<script src="/static/saved-orders.js"></script>
+</body>
+</html>
