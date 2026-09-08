@@ -72,6 +72,65 @@ function issueList(issues) {
 
 const money = (value) => `$${Number(value || 0).toFixed(2)}`;
 
+function costShareText(title, costs) {
+  if (!costs || !(costs.by_person || []).length) return '';
+  const lines = [title || 'Boba order'];
+  costs.by_person.forEach((entry) => lines.push(`${entry.person}: ${money(entry.total)}`));
+  lines.push(`Group total: ${money(costs.total)}`);
+  lines.push(costs.estimated
+    ? 'Estimate before tax, tip, and fees.'
+    : 'Shared costs split proportionally by drink subtotal.');
+  return lines.join('\n');
+}
+
+function costBreakdown(costs, title) {
+  if (!costs || !(costs.by_person || []).length) return null;
+  const section = el('section', 'cost-breakdown');
+  const heading = el('div', 'cost-breakdown-heading');
+  heading.append(el('h3', null, 'Who owes what'));
+  const copy = el('button', 'text-button', 'Copy breakdown');
+  copy.type = 'button';
+  copy.addEventListener('click', async () => {
+    const text = costShareText(title, costs);
+    try {
+      await window.navigator.clipboard.writeText(text);
+      copy.textContent = 'Copied!';
+      window.setTimeout(() => { copy.textContent = 'Copy breakdown'; }, 1800);
+    } catch (_error) {
+      window.prompt('Copy this payment breakdown:', text);
+    }
+  });
+  heading.append(copy);
+  section.append(heading);
+
+  const list = el('ul', 'cost-breakdown-list');
+  costs.by_person.forEach((entry) => {
+    const item = el('li');
+    const label = el('span');
+    label.append(el('strong', null, entry.person));
+    const detail = entry.shared
+      ? `${money(entry.subtotal)} drinks + ${money(entry.shared)} shared costs`
+      : `${plural(entry.drinks, 'drink')} from the menu`;
+    label.append(el('small', null, detail));
+    item.append(label, el('strong', 'cost-owed', money(entry.total)));
+    list.append(item);
+  });
+  section.append(list);
+  const total = el('div', 'cost-breakdown-total');
+  total.append(el('span', null, costs.estimated ? 'Estimated group total' : 'Group total'),
+    el('strong', null, money(costs.total)));
+  section.append(total);
+  const note = costs.estimated
+    ? 'Captured menu prices; tax, tip, and fees are added after the cart is built.'
+    : 'Tax, tip, fees, discounts, and other cart-wide adjustments are split proportionally by drink subtotal.';
+  section.append(el('p', 'muted cost-breakdown-note', note));
+  if (costs.unpriced_drinks) {
+    section.append(el('p', 'attention-callout',
+      `${plural(costs.unpriced_drinks, 'drink')} could not be priced and are not included.`));
+  }
+  return section;
+}
+
 const SAVED_ORDERS_KEY = 'boba-builder:saved-orders-token';
 
 function savedOrdersToken() {
@@ -981,6 +1040,8 @@ function showCartResult(outcome, run) {
 
     const totals = cartTotals(cart);
     if (totals) outcome.append(totals);
+    const split = costBreakdown(run.costs, (run.source || {}).title);
+    if (split) outcome.append(split);
   }
 
   if (handoff) {
@@ -1010,8 +1071,8 @@ function saveFinishedOrder(run) {
   const section = el('section', 'save-finished');
   section.append(el('h3', null, 'Save this finished order'));
   section.append(el('p', 'muted',
-    'Saved Orders are private to this browser. The finished cart snapshot stays available '
-    + 'after the temporary working order expires.'));
+    'After checkout, enter the tip or exact amount paid so everyone’s share matches the receipt. '
+    + 'Saved Orders are private to this browser.'));
 
   const form = el('form', 'save-order-form');
   const name = el('input', 'cell-input');
@@ -1027,11 +1088,26 @@ function saveFinishedOrder(run) {
   date.value = new Date().toISOString().slice(0, 10);
   date.setAttribute('aria-label', 'Order date');
 
+  const tip = el('input', 'cell-input');
+  tip.type = 'number';
+  tip.min = '0';
+  tip.step = '0.01';
+  tip.placeholder = '0.00';
+  tip.setAttribute('aria-label', 'Tip paid');
+
+  const totalPaid = el('input', 'cell-input');
+  totalPaid.type = 'number';
+  totalPaid.min = '0';
+  totalPaid.step = '0.01';
+  totalPaid.placeholder = (run.costs && run.costs.total != null) ? money(run.costs.total) : 'Optional';
+  totalPaid.setAttribute('aria-label', 'Final amount paid');
+
   const save = el('button', 'btn primary', 'Save order');
   save.type = 'submit';
   const feedback = el('div', 'save-feedback');
 
-  form.append(field('Name', name), field('Date', date), save);
+  form.append(field('Name', name), field('Date', date),
+    field('Tip (optional)', tip), field('Final paid (optional)', totalPaid), save);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const label = name.value.trim();
@@ -1045,13 +1121,16 @@ function saveFinishedOrder(run) {
     feedback.className = 'save-feedback';
     feedback.textContent = 'Saving…';
     try {
+      const payload = {run_id: runId, label, order_date: date.value};
+      if (tip.value !== '') payload.tip = Number(tip.value);
+      if (totalPaid.value !== '') payload.total_paid = Number(totalPaid.value);
       const response = await fetch('/api/saved-orders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Saved-Orders-Token': savedOrdersToken(),
         },
-        body: JSON.stringify({run_id: runId, label, order_date: date.value}),
+        body: JSON.stringify(payload),
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || 'That order could not be saved.');
@@ -1089,6 +1168,10 @@ function renderNextStep(run, stages) {
   }
 
   const actions = el('div', 'actions');
+  if (!viewingCart) {
+    const split = costBreakdown(run.costs, (run.source || {}).title);
+    if (split) next.append(split);
+  }
   const go = el('button', 'btn primary', built && !viewingCart
     ? 'Continue to cart'
     : run.cart && run.cart.status === 'partial' ? 'Try the cart again' : 'Build the cart');

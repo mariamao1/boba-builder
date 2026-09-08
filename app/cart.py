@@ -17,7 +17,7 @@ import json
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import matcher, menu as menu_module
+from . import costs, matcher, menu as menu_module
 from scripts import kft_api
 
 ORDER_TYPE = "takeout"
@@ -269,6 +269,7 @@ def _prebuild_failure(matched: dict, error: str, code: str, *,
         "totals": _totals({}),
     }
     result["manifest"] = []
+    result["costs"] = costs.from_rows(result.get("rows") or [])
     result.pop("handoff_url", None)
     return result
 
@@ -331,6 +332,7 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
         cart["warnings"] = list(dict.fromkeys((cart.get("warnings") or []) + warnings))
         result["cart"] = cart
         result["manifest"] = list(cart.get("added") or [])
+        result["costs"] = costs.from_cart(cart)
         result["handoff_url"] = matched["handoff_url"]
         return result
 
@@ -416,6 +418,8 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
             cart["error"] = error
         result["cart"] = cart
         result["manifest"] = manifest
+        result["costs"] = (costs.from_cart(cart) if cart.get("review_ready")
+                           else costs.from_rows(result.get("rows") or []))
         if cart["review_ready"]:
             result["handoff_url"] = api.handoff_url(restaurant_id, order_id)
         else:

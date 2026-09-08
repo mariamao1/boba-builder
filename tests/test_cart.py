@@ -137,6 +137,9 @@ class CartBuildTests(unittest.TestCase):
         self.assertEqual(sent["options"]["Sugar Level"][0]["name"], "Half S 50%")
         self.assertNotIn("never-persist-this", json.dumps(built))
         self.assertEqual(built["cart"]["totals"]["total"], 6.48)
+        self.assertEqual(built["costs"]["source"], "cart_total")
+        self.assertFalse(built["costs"]["estimated"])
+        self.assertEqual(built["costs"]["by_person"][0]["total"], 6.48)
 
     def test_closed_store_still_builds_a_reviewable_cart_and_says_when_it_opens(self):
         run = matched("Name,Drink,Size\nAlice,Taro Slush,Medium\n")

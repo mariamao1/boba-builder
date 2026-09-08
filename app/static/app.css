@@ -313,6 +313,16 @@ input[type=url], input[type=text], input[type=search], select {
 .cart-totals dd { text-align: right; font-variant-numeric: tabular-nums; }
 .cart-totals .grand { font-size: 1.05rem; font-weight: 700; margin-top: .25rem; }
 .handoff-note { margin-bottom: 0; color: var(--muted); font-size: .85rem; }
+.cost-breakdown { margin-top: 1rem; padding: .9rem; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.cost-breakdown-heading, .cost-breakdown-total { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.cost-breakdown-heading h3 { margin: 0; }
+.cost-breakdown-list { margin: .55rem 0; padding: 0; list-style: none; }
+.cost-breakdown-list li { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem 0; border-bottom: 1px solid var(--line); }
+.cost-breakdown-list li > span { display: grid; }
+.cost-breakdown-list small { color: var(--muted); font-size: .75rem; }
+.cost-owed, .cost-breakdown-total strong { color: var(--brand); font-variant-numeric: tabular-nums; }
+.cost-breakdown-total { padding-top: .3rem; font-size: 1.05rem; }
+.cost-breakdown-note { margin: .65rem 0 0; font-size: .8rem; }
 
 /* --- preview ------------------------------------------------------------- */
 
@@ -487,7 +497,7 @@ table.orders td .drink-input { min-width: 8rem; }
 .save-finished h3 { margin: 0 0 .25rem; }
 .save-finished > p { margin: 0; }
 .save-order-form {
-  display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(9rem, .55fr) auto;
+  display: grid; grid-template-columns: minmax(12rem, 1fr) repeat(3, minmax(8rem, .55fr)) auto;
   gap: .7rem; align-items: end; margin-top: .8rem;
 }
 .save-order-form .btn { min-height: 2.3rem; }
@@ -515,6 +525,8 @@ table.orders td .drink-input { min-width: 8rem; }
 .saved-detail-head h2 { margin-bottom: .2rem; }
 .saved-stats { margin-top: 1rem; }
 .saved-manifest { margin-top: .8rem; }
+.saved-costs { margin-top: 1.3rem; }
+.saved-costs .cost-breakdown-heading h3 { margin: 0; }
 .saved-problems { margin-top: 1.3rem; }
 .saved-problems h3 { margin-bottom: .45rem; }
 

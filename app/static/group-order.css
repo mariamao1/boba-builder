@@ -150,6 +150,7 @@
 }
 .group-order-detail { margin: .2rem 0 0; color: var(--muted); font-size: .82rem; }
 .group-order-qty { color: var(--brand); font-weight: 750; white-space: nowrap; }
+.group-order-cost { display: grid; justify-items: end; align-content: start; gap: .15rem; color: var(--brand); font-variant-numeric: tabular-nums; }
 .group-order-actions { grid-column: 1 / -1; display: flex; gap: .8rem; }
 .group-order-actions .text-button { padding-left: 0; }
 .group-order-actions .delete-order { color: var(--err); }

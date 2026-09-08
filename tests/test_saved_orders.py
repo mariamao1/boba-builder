@@ -114,6 +114,23 @@ class SavedOrderStoreTests(unittest.TestCase):
         repeated = runs.load(saved_orders.repeat(saved["id"], OWNER))
         self.assertEqual(repeated["source"]["original_kind"], "group_order")
 
+    def test_tip_and_final_receipt_total_are_saved_in_the_person_split(self):
+        run = finished_run()
+        second = dict(run["cart"]["added"][0], row_number=3, person="Bob",
+                      quantity=1, actual_total=6.70)
+        run["cart"]["added"].append(second)
+        run["manifest"] = run["cart"]["added"]
+        run["cart"]["totals"] = {
+            "subtotal": 20.0, "tax": 1.78, "fees": {}, "total": 21.78,
+        }
+        saved = saved_orders.save_finished(
+            run, OWNER, "Receipt", "2026-09-08", tip=3, total_paid=24.78)
+
+        self.assertEqual(saved["totals"]["tip"], 3.0)
+        self.assertEqual(saved["totals"]["total"], 24.78)
+        self.assertEqual(saved["costs"]["total"], 24.78)
+        self.assertEqual(sum(item["total"] for item in saved["costs"]["by_person"]), 24.78)
+
     def test_same_run_updates_one_saved_order(self):
         first = saved_orders.save_finished(finished_run(), OWNER, "First", "2026-09-07")
         second = saved_orders.save_finished(finished_run(), OWNER, "Renamed", "2026-09-08")

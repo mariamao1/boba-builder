@@ -447,7 +447,10 @@ function renderGroupOrders() {
     copy.append(person);
     copy.append(node('h3', null, order.drink));
     copy.append(node('p', 'group-order-detail', orderDetails(order)));
-    card.append(copy, node('span', 'group-order-qty', order.quantity > 1 ? `×${order.quantity}` : ''));
+    const cost = node('div', 'group-order-cost');
+    if (order.quantity > 1) cost.append(node('span', 'group-order-qty', `×${order.quantity}`));
+    if (order.estimated_total != null) cost.append(node('strong', null, money(order.estimated_total)));
+    card.append(copy, cost);
     if (ownership && session.accepting_orders) {
       const actions = node('div', 'group-order-actions');
       const edit = node('button', 'text-button', 'Edit');

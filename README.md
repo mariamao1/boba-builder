@@ -48,6 +48,9 @@ Python 3.11+, standard library only — nothing to install.
       (`docs/task11-unified-flow.md`)
 - [x] **Task 12** — browser-scoped finished-order archive, detail, export, and repeat
       (`docs/task12-saved-orders.md`)
+- [x] **Task 13** — live per-person estimates, proportional shared-cost splitting,
+      final receipt totals, and shareable payment breakdowns
+      (`docs/task13-payment-splitting.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.

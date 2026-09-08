@@ -33,6 +33,9 @@ const elements = {
   moderationNote: document.getElementById('moderation-note'),
   peopleOrders: document.getElementById('people-orders'),
   drinkRollup: document.getElementById('drink-rollup'),
+  costBreakdown: document.getElementById('cost-breakdown'),
+  costNote: document.getElementById('cost-note'),
+  copyCosts: document.getElementById('copy-costs'),
   finalize: document.getElementById('finalize'),
   continuePreview: document.getElementById('continue-preview'),
   finalizeCopy: document.getElementById('finalize-copy'),
@@ -79,6 +82,10 @@ function node(tag, className, text) {
 
 function plural(count, one, many) {
   return `${count} ${count === 1 ? one : (many || `${one}s`)}`;
+}
+
+function money(value) {
+  return `$${Number(value || 0).toFixed(2)}`;
 }
 
 function normalized(value) {
@@ -195,6 +202,7 @@ function renderOrders() {
   });
 
   const people = new Map();
+  const costByPerson = new Map(((session.costs || {}).by_person || []).map((entry) => [normalized(entry.person), entry]));
   session.orders.forEach((order) => {
     const key = normalized(order.person);
     if (!people.has(key)) people.set(key, { name: order.person, orders: [], drinks: 0 });
@@ -206,7 +214,11 @@ function renderOrders() {
   people.forEach((person) => {
     const section = node('section', 'person-group');
     const heading = node('div', 'person-heading');
-    heading.append(node('h3', null, person.name), node('span', 'person-total', plural(person.drinks, 'drink')));
+    const personCost = costByPerson.get(normalized(person.name));
+    const totalLabel = personCost
+      ? `${plural(person.drinks, 'drink')} · ${money(personCost.total)}`
+      : plural(person.drinks, 'drink');
+    heading.append(node('h3', null, person.name), node('span', 'person-total', totalLabel));
     const lines = node('div', 'person-lines');
     person.orders.forEach((order) => {
       const line = node('article', 'organizer-order-line');
@@ -217,6 +229,10 @@ function renderOrders() {
       }
       const quantity = order.quantity > 1 ? ` ×${order.quantity}` : '';
       title.append(node('span', 'group-order-qty', quantity));
+      const lineTotal = order.actual_total == null ? order.estimated_total : order.actual_total;
+      if (lineTotal != null) {
+        title.append(node('span', 'order-line-price', money(lineTotal)));
+      }
       line.append(title, node('p', 'group-order-detail', orderDetails(order)));
       const added = timeText(order.created_at);
       line.append(node('span', 'line-meta', added ? `Added ${added}` : 'Submitted order'));
@@ -231,6 +247,43 @@ function renderOrders() {
     section.append(heading, lines);
     elements.peopleOrders.append(section);
   });
+}
+
+function costShareText() {
+  const costs = session && session.costs;
+  if (!costs || !costs.by_person || !costs.by_person.length) return '';
+  return [session.title, ...costs.by_person.map((entry) => `${entry.person}: ${money(entry.total)}`),
+    `Group total: ${money(costs.total)}`,
+    costs.estimated ? 'Estimate before tax, tip, and fees.' : 'Shared costs split proportionally.'].join('\n');
+}
+
+function renderCosts() {
+  const costs = session && session.costs;
+  elements.costBreakdown.textContent = '';
+  if (!costs || !costs.by_person || !costs.by_person.length) {
+    elements.costBreakdown.append(node('p', 'muted', 'Add a drink to start the estimate.'));
+    elements.copyCosts.disabled = true;
+    return;
+  }
+  const list = node('ul', 'cost-split-list');
+  costs.by_person.forEach((entry) => {
+    const item = node('li');
+    const name = node('span');
+    name.append(document.createTextNode(entry.person), node('small', null, plural(entry.drinks, 'drink')));
+    item.append(name, node('strong', null, money(entry.total)));
+    list.append(item);
+  });
+  const total = node('div', 'cost-group-total');
+  total.append(node('span', null, costs.estimated ? 'Estimated group total' : 'Group total'),
+    node('strong', null, money(costs.total)));
+  elements.costBreakdown.append(list, total);
+  elements.copyCosts.disabled = false;
+  const missing = Number(costs.unpriced_drinks || 0);
+  elements.costNote.textContent = missing
+    ? `${plural(missing, 'drink')} could not be priced and are not included.`
+    : costs.estimated
+      ? 'Captured menu estimate before tax, tip, and fees. The built cart replaces it with live totals.'
+      : 'Live cart total. Tax and fees are split proportionally by drink subtotal.';
 }
 
 function renderDrinkTotals() {
@@ -261,6 +314,7 @@ function render() {
   renderRoom();
   renderOrders();
   renderDrinkTotals();
+  renderCosts();
 }
 
 function applyPublicSession(updated) {
@@ -383,6 +437,17 @@ elements.copyLink.addEventListener('click', async () => {
     window.setTimeout(() => { elements.copyLink.textContent = 'Copy link'; }, 1800);
   } catch (_error) {
     window.prompt('Copy this participant link:', url);
+  }
+});
+elements.copyCosts.addEventListener('click', async () => {
+  const text = costShareText();
+  if (!text) return;
+  try {
+    await window.navigator.clipboard.writeText(text);
+    elements.copyCosts.textContent = 'Copied!';
+    window.setTimeout(() => { elements.copyCosts.textContent = 'Copy'; }, 1800);
+  } catch (_error) {
+    window.prompt('Copy this payment breakdown:', text);
   }
 });
 elements.refresh.addEventListener('click', () => refreshSession({ announce: true }));

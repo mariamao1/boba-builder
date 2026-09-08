@@ -74,6 +74,13 @@ class GroupOrderStoreTests(unittest.TestCase):
         })
         self.assertNotIn(first_token, json.dumps(aggregate))
         self.assertEqual(aggregate["orders"][0]["toppings"], ["Boba"])
+        self.assertEqual(aggregate["costs"]["source"], "menu_estimate")
+        self.assertEqual(aggregate["costs"]["priced_drinks"], 3)
+        self.assertEqual(
+            sum(person["total"] for person in aggregate["costs"]["by_person"]),
+            aggregate["costs"]["total"],
+        )
+        self.assertIsNotNone(aggregate["orders"][0]["estimated_total"])
 
     def test_create_pins_an_available_store_to_the_room(self):
         room, _organizer_token = group_orders.create(restaurant_id=ALTERNATE_STORE)
@@ -173,6 +180,25 @@ class GroupOrderStoreTests(unittest.TestCase):
             group_orders.finalize(room["id"], "wrong")
         with self.assertRaises(group_orders.EmptyRoom):
             group_orders.finalize(room["id"], organizer_token)
+
+    def test_organizer_switches_from_menu_estimate_to_built_cart_total(self):
+        room, organizer_token = group_orders.create()
+        group_orders.add_order(room["id"], ORDER)
+        _finalized, run_id = group_orders.finalize(room["id"], organizer_token)
+        run = runs.load(run_id)
+        run["cart"] = {
+            "status": "ready", "review_ready": True,
+            "added": [{"row_number": 2, "person": "Alice", "drink": "Taro Slush",
+                       "quantity": 1, "actual_total": 7.00}],
+            "totals": {"subtotal": 7.00, "tax": 0.62, "fees": {}, "total": 7.62},
+        }
+        runs.save(run, run_id)
+
+        dashboard = group_orders.get_for_organizer(room["id"], organizer_token)
+
+        self.assertEqual(dashboard["costs"]["source"], "cart_total")
+        self.assertEqual(dashboard["costs"]["by_person"][0]["total"], 7.62)
+        self.assertEqual(dashboard["orders"][0]["actual_total"], 7.00)
 
     def test_selected_store_drives_final_matching_and_cart_destination(self):
         room, organizer_token = group_orders.create(restaurant_id=ALTERNATE_STORE)

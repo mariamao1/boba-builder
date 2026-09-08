@@ -16,6 +16,49 @@ const el = (tag, className, text) => {
 const money = (value) => `$${Number(value || 0).toFixed(2)}`;
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many || one + 's'}`;
 
+function costShareText(order) {
+  const costs = order.costs || {};
+  return [order.label, ...(costs.by_person || []).map((entry) =>
+    `${entry.person}: ${money(entry.total)}`), `Group total: ${money(costs.total)}`,
+  'Shared costs split proportionally by drink subtotal.'].join('\n');
+}
+
+function costBlock(order) {
+  const costs = order.costs || {};
+  if (!(costs.by_person || []).length) return null;
+  const section = el('section', 'saved-costs');
+  const heading = el('div', 'cost-breakdown-heading');
+  heading.append(el('h3', null, 'Who owes what'));
+  const copy = el('button', 'text-button', 'Copy breakdown');
+  copy.type = 'button';
+  copy.addEventListener('click', async () => {
+    const text = costShareText(order);
+    try {
+      await window.navigator.clipboard.writeText(text);
+      copy.textContent = 'Copied!';
+      window.setTimeout(() => { copy.textContent = 'Copy breakdown'; }, 1800);
+    } catch (_error) {
+      window.prompt('Copy this payment breakdown:', text);
+    }
+  });
+  heading.append(copy);
+  const list = el('ul', 'cost-breakdown-list');
+  costs.by_person.forEach((entry) => {
+    const item = el('li');
+    const label = el('span');
+    label.append(el('strong', null, entry.person),
+      el('small', null, `${money(entry.subtotal)} drinks + ${money(entry.shared)} shared costs`));
+    item.append(label, el('strong', 'cost-owed', money(entry.total)));
+    list.append(item);
+  });
+  const total = el('div', 'cost-breakdown-total');
+  total.append(el('span', null, 'Group total'), el('strong', null, money(costs.total)));
+  section.append(heading, list, total,
+    el('p', 'muted cost-breakdown-note',
+      'Tax, tip, fees, discounts, and other cart-wide adjustments are split proportionally.'));
+  return section;
+}
+
 function browserToken() {
   const stores = [];
   ['localStorage', 'sessionStorage'].forEach((name) => {
@@ -180,6 +223,7 @@ function totalsBlock(totals) {
   add('Tax', totals.tax);
   Object.keys(totals.fees || {}).forEach((key) =>
     add(key.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()), totals.fees[key]));
+  add('Tip', totals.tip);
   add('Total', totals.total, true);
   return block;
 }
@@ -262,6 +306,8 @@ function renderDetail(order) {
   if (failed) detail.append(failed);
   const skipped = problemList('Not mapped, so not placed', order.skipped);
   if (skipped) detail.append(skipped);
+  const split = costBlock(order);
+  if (split) detail.append(split);
   const totals = totalsBlock(order.totals);
   if (totals) detail.append(totals);
   body.append(detail);

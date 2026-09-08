@@ -391,6 +391,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._saved_orders_token(),
                 payload.get("label"),
                 payload.get("order_date"),
+                payload.get("tip"),
+                payload.get("total_paid"),
             )
         except saved_orders.SavedOrderError as exc:
             return self._saved_order_error(exc)

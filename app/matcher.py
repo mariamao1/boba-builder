@@ -47,7 +47,7 @@ import datetime as _dt
 import json
 import sys
 
-from . import mapping, menu as menu_module
+from . import costs, mapping, menu as menu_module
 from .schema import Issue
 
 #: Row-level outcomes.
@@ -484,6 +484,9 @@ def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
         "drinks": drinks,
         "subtotal": round(subtotal, 2),
     }
+    cart = result.get("cart") or {}
+    result["costs"] = (costs.from_cart(cart) if cart.get("review_ready")
+                       else costs.from_rows(rows))
     return result
 
 

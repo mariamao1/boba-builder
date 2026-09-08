@@ -15,13 +15,14 @@ import datetime as dt
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import secrets
 import threading
 from pathlib import Path
 
-from . import runs
+from . import costs, runs
 
 SAVED_ORDER_DIR = Path(os.environ.get(
     "BOBA_SAVED_ORDER_DIR",
@@ -93,6 +94,20 @@ def _clean_date(value, now: dt.datetime | None = None) -> str:
         raise SavedOrderError("order date must be a real date in YYYY-MM-DD format") from exc
 
 
+def _clean_money(value, label: str) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise SavedOrderError(f"{label} must be a dollar amount")
+    try:
+        amount = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SavedOrderError(f"{label} must be a dollar amount") from exc
+    if not math.isfinite(amount) or amount < 0 or amount > 100_000:
+        raise SavedOrderError(f"{label} must be between $0 and $100,000")
+    return round(amount + 1e-10, 2)
+
+
 def _read_file(path: Path) -> dict | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -151,15 +166,23 @@ def _public(order: dict, *, detail: bool) -> dict:
     )
     result = {key: copy.deepcopy(order.get(key)) for key in keys}
     if detail:
+        cost_summary = copy.deepcopy(order.get("costs") or {})
+        if not cost_summary and order.get("items"):
+            cost_summary = costs.from_cart({
+                "added": order.get("items") or [],
+                "totals": order.get("totals") or {},
+            })
         result.update({
             "items": copy.deepcopy(order.get("items") or []),
             "failed": copy.deepcopy(order.get("failed") or []),
             "skipped": copy.deepcopy(order.get("skipped") or []),
+            "costs": cost_summary,
         })
     return result
 
 
 def save_finished(run: dict, owner_token: str | None, label, order_date=None,
+                  tip=None, total_paid=None,
                   *, now: dt.datetime | None = None) -> dict:
     owner = _owner_hash(owner_token)
     cart = run.get("cart") or {}
@@ -175,6 +198,13 @@ def save_finished(run: dict, owner_token: str | None, label, order_date=None,
     placed = sum(int(item.get("quantity") or 1) for item in items)
     not_placed = sum(int(item.get("quantity") or 1)
                      for key in ("failed", "skipped") for item in cart.get(key) or [])
+    tip = _clean_money(tip, "tip")
+    total_paid = _clean_money(total_paid, "final amount paid")
+    cost_summary = costs.from_cart(cart, tip=tip, total_paid=total_paid)
+    final_totals = copy.deepcopy(cart.get("totals") or {})
+    if tip is not None:
+        final_totals["tip"] = tip
+    final_totals["total"] = cost_summary["total"]
     record = {
         "id": secrets.token_urlsafe(18),
         "owner_hash": owner,
@@ -192,7 +222,8 @@ def save_finished(run: dict, owner_token: str | None, label, order_date=None,
             "placed_drinks": int(cart_counts.get("added_drinks", placed)),
             "not_placed_drinks": int(cart_counts.get("not_added_drinks", not_placed)),
         },
-        "totals": copy.deepcopy(cart.get("totals") or {}),
+        "totals": final_totals,
+        "costs": cost_summary,
         "items": items,
         "failed": copy.deepcopy(cart.get("failed") or []),
         "skipped": copy.deepcopy(cart.get("skipped") or []),

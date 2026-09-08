@@ -40,7 +40,7 @@
 .organizer-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); gap: 1rem; align-items: start; }
 .organizer-sidebar { display: grid; gap: 1rem; position: sticky; top: 1rem; }
 .organizer-section-heading { display: flex; justify-content: space-between; align-items: end; gap: 1rem; padding-bottom: .9rem; border-bottom: 1px solid var(--line); }
-.organizer-section-heading h2, .drink-rollup-card h2, .finalize-card h2 { margin: 0; }
+.organizer-section-heading h2, .drink-rollup-card h2, .cost-breakdown-card h2, .finalize-card h2 { margin: 0; }
 .organizer-section-heading > .muted { max-width: 16rem; text-align: right; font-size: .78rem; }
 .empty-state { padding: 1.3rem 0 .25rem; text-align: center; }
 
@@ -55,6 +55,7 @@
   border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
 }
 .order-line-title { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; font-weight: 700; }
+.order-line-price { margin-left: auto; color: var(--brand); font-variant-numeric: tabular-nums; }
 .duplicate-badge { padding: .1rem .42rem; border-radius: 999px; background: #fff3d3; color: #835700; font-size: .66rem; font-weight: 750; letter-spacing: .03em; text-transform: uppercase; }
 .organizer-order-line .group-order-detail { grid-column: 1; }
 .line-meta { grid-column: 1; color: var(--muted); font-size: .72rem; }
@@ -65,6 +66,14 @@
 .drink-rollup li { display: flex; justify-content: space-between; gap: .75rem; padding: .6rem 0; border-bottom: 1px solid var(--line); }
 .drink-rollup li:last-child { border-bottom: 0; }
 .drink-rollup strong { color: var(--brand); }
+.cost-card-heading { display: flex; justify-content: space-between; align-items: start; gap: .75rem; }
+.cost-split-list { margin: .7rem 0 0; padding: 0; list-style: none; }
+.cost-split-list li, .cost-group-total { display: flex; justify-content: space-between; gap: .75rem; padding: .58rem 0; border-bottom: 1px solid var(--line); }
+.cost-split-list li > span { display: grid; }
+.cost-split-list small { color: var(--muted); font-size: .72rem; }
+.cost-split-list strong, .cost-group-total strong { color: var(--brand); font-variant-numeric: tabular-nums; }
+.cost-group-total { border-bottom: 0; padding-bottom: 0; font-weight: 700; }
+.cost-note { margin: .75rem 0 0; color: var(--muted); font-size: .78rem; line-height: 1.4; }
 .finalize-card p:not(.step-label) { color: var(--muted); font-size: .88rem; }
 .finalize-button { display: block; width: 100%; margin-top: 1rem; text-align: center; }
 .finalize-card .status { margin-bottom: 0; }

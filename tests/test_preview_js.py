@@ -348,6 +348,19 @@ report({found: !!toggle});
 """)
         self.assertTrue(seen["found"])
 
+    def test_menu_estimate_shows_each_person_and_group_total(self):
+        seen = self.drive("""
+var people = 0, total = null;
+nodes.body.walk(function (node) {
+  if (node.className === 'cost-owed') people++;
+  if (node.className === 'cost-breakdown-total') total = node.textContent;
+});
+report({heading: !!byText('', 'Who owes what'), people: people, total: total});
+""")
+        self.assertTrue(seen["heading"])
+        self.assertGreater(seen["people"], 1)
+        self.assertIn("Estimated group total", seen["total"])
+
     def test_the_top_back_button_returns_to_import_while_checking(self):
         seen = self.drive("""
 var back = document.getElementById('preview-back');
@@ -469,6 +482,30 @@ report({url: posted[0].url, body: JSON.parse(posted[0].body)});
             "body": {"run_id": "testrun", "label": "Tuesday tea",
                      "order_date": "2026-09-08"},
         })
+
+    def test_saving_can_record_tip_and_final_amount_paid(self):
+        seen = self.drive("""
+var built = Object.assign({}, reply.run, {
+  cart: {
+    status: 'ready', review_ready: true, warnings: [], failed: [], skipped: [],
+    store: {}, totals: {total: 14.48}, counts: {}, added: [],
+  },
+});
+render(built, reply.stages, true);
+var form = null, tip = null, paid = null;
+nodes.body.walk(function (node) {
+  if (node.className === 'save-order-form') form = node;
+  if (node.attrs && node.attrs['aria-label'] === 'Tip paid') tip = node;
+  if (node.attrs && node.attrs['aria-label'] === 'Final amount paid') paid = node;
+});
+tip.value = '3.00';
+paid.value = '17.48';
+form.dispatch('submit');
+drainMicrotasks();
+report(JSON.parse(posted[0].body));
+""")
+        self.assertEqual(seen["tip"], 3)
+        self.assertEqual(seen["total_paid"], 17.48)
 
     def test_the_handoff_reconciles_requested_placed_and_missing_drinks(self):
         seen = self.drive("""

@@ -81,6 +81,18 @@
       </section>
 
       <aside class="organizer-sidebar">
+        <section class="card cost-breakdown-card" aria-labelledby="cost-breakdown-heading">
+          <div class="cost-card-heading">
+            <div>
+              <p class="step-label">Payment split</p>
+              <h2 id="cost-breakdown-heading">Who owes what</h2>
+            </div>
+            <button class="text-button" id="copy-costs" type="button" disabled>Copy</button>
+          </div>
+          <div id="cost-breakdown"><p class="muted">Add a drink to start the estimate.</p></div>
+          <p class="cost-note" id="cost-note">Based on this store's captured menu. Tax, tip, and fees are added from the cart later.</p>
+        </section>
+
         <section class="card drink-rollup-card" aria-labelledby="drink-rollup-heading">
           <p class="step-label">By drink</p>
           <h2 id="drink-rollup-heading">Drink totals</h2>

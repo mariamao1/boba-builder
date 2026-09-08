@@ -22,7 +22,7 @@ import secrets
 import threading
 from pathlib import Path
 
-from . import importer, menu, runs
+from . import costs, importer, matcher, menu, runs
 
 SESSION_DIR = Path(os.environ.get(
     "BOBA_GROUP_ORDER_DIR",
@@ -259,6 +259,39 @@ def _public_order(order: dict) -> dict:
     return {key: value for key, value in order.items() if not key.endswith("_hash")}
 
 
+def _rows_payload(orders: list[dict]) -> list[dict]:
+    fields = ("person",) + ORDER_FIELDS
+    return [
+        {field: (", ".join(order.get(field) or []) if field == "toppings"
+                 else order.get(field, ""))
+         for field in fields}
+        for order in orders
+    ]
+
+
+def _price_orders(orders: list[dict], restaurant_id: str) -> tuple[list[dict], dict]:
+    """Price room lines from its pinned captured menu, never client input."""
+    public = [_public_order(order) for order in orders]
+    if not orders:
+        return public, costs.breakdown([])
+    try:
+        imported = importer.import_json(
+            json.dumps({"rows": _rows_payload(orders)}), restaurant_id=restaurant_id)
+        priced = matcher.match(imported.as_dict())
+        for order, row in zip(public, priced.get("rows") or []):
+            found = row.get("match") or {}
+            order["estimated_total"] = (
+                found.get("total") if found.get("status") == matcher.READY else None)
+            order["price_status"] = found.get("status") or matcher.SKIPPED
+        return public, priced.get("costs") or costs.from_rows(priced.get("rows") or [])
+    except Exception:
+        # Room reading and moderation must remain available if a captured menu
+        # is temporarily unreadable. The UI names any such lines as unpriced.
+        fallback = [{"person": order.get("person"), "quantity": order.get("quantity"),
+                     "amount": None} for order in orders]
+        return public, costs.breakdown(fallback)
+
+
 def _summary(orders: list[dict]) -> dict:
     people: dict[str, dict] = {}
     for order in orders:
@@ -278,9 +311,9 @@ def _summary(orders: list[dict]) -> dict:
 
 def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
     current = _as_utc(now)
-    orders = [_public_order(order) for order in room.get("orders") or []]
     status = _effective_status(room, current)
     restaurant_id = room.get("restaurant_id") or menu.TARGET_STORE
+    orders, cost_summary = _price_orders(room.get("orders") or [], restaurant_id)
     store = menu.store_summary(restaurant_id)
     return {
         "id": room["id"],
@@ -297,6 +330,7 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
         "closed_at": room.get("closed_at"),
         "orders": orders,
         "summary": _summary(orders),
+        "costs": cost_summary,
     }
 
 
@@ -360,9 +394,19 @@ def get_for_organizer(room_id: str, organizer_token: str | None, *,
             raise Forbidden("the organizer token is missing or invalid")
         result = public_room(room, now=now)
         run_id = room.get("finalized_run_id")
+        finalized_run = runs.load(run_id) if run_id else None
         result["finalized_at"] = room.get("finalized_at")
         result["preview_url"] = (
-            f"/preview/{run_id}" if run_id and runs.load(run_id) is not None else None)
+            f"/preview/{run_id}" if finalized_run is not None else None)
+        cart = (finalized_run or {}).get("cart") or {}
+        if cart.get("review_ready"):
+            result["costs"] = costs.from_cart(cart)
+            for line in cart.get("added") or []:
+                index = int(line.get("row_number") or 0) - 2
+                if 0 <= index < len(result["orders"]):
+                    result["orders"][index]["actual_total"] = (
+                        line.get("actual_total") if line.get("actual_total") is not None
+                        else line.get("estimated_total"))
         return result
 
 
@@ -483,13 +527,7 @@ def finalize(room_id: str, organizer_token: str | None, *,
         if not orders:
             raise EmptyRoom("add at least one drink before finalizing this group order")
 
-        fields = ("person",) + ORDER_FIELDS
-        rows_payload = [
-            {field: (", ".join(order.get(field) or []) if field == "toppings"
-                     else order.get(field, ""))
-             for field in fields}
-            for order in orders
-        ]
+        rows_payload = _rows_payload(orders)
         restaurant_id = room.get("restaurant_id") or menu.TARGET_STORE
         result = importer.import_json(
             json.dumps({"rows": rows_payload}), restaurant_id=restaurant_id)
