@@ -244,6 +244,44 @@ document.addEventListener('paste', (event) => {
 
 /* --- group-order creation ------------------------------------------------ */
 
+function localDateTimeValue(value) {
+  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function initializeDeadline() {
+  const input = $('group-deadline');
+  const now = new Date();
+  const nextQuarterHour = new Date(
+    Math.ceil((now.getTime() + 2 * 60 * 60 * 1000) / (15 * 60 * 1000)) * 15 * 60 * 1000
+  );
+  input.value = localDateTimeValue(nextQuarterHour);
+  renderDeadlineChoice();
+}
+
+function selectedDeadline() {
+  const preset = $('group-deadline-preset').value;
+  if (preset === 'custom') return new Date($('group-deadline').value);
+  return new Date(Date.now() + Number(preset) * 60 * 60 * 1000);
+}
+
+function renderDeadlineChoice() {
+  const now = new Date();
+  $('group-deadline').min = localDateTimeValue(new Date(now.getTime() + 60 * 1000));
+  $('group-deadline').max = localDateTimeValue(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
+  const custom = $('group-deadline-preset').value === 'custom';
+  $('custom-deadline-field').hidden = !custom;
+  $('group-deadline').required = custom;
+  const deadline = selectedDeadline();
+  const formatted = Number.isNaN(deadline.getTime()) ? '' : new Intl.DateTimeFormat(undefined, {
+    weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  }).format(deadline);
+  $('deadline-preview').textContent = formatted ? `Closes ${formatted}` : 'Choose a future date and time.';
+}
+
+$('group-deadline-preset').addEventListener('change', renderDeadlineChoice);
+$('group-deadline').addEventListener('input', renderDeadlineChoice);
+
 $('group-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const submit = $('group-submit');
@@ -253,11 +291,19 @@ $('group-form').addEventListener('submit', async (event) => {
     $('store-search').focus();
     return;
   }
+  const deadline = selectedDeadline();
+  if (Number.isNaN(deadline.getTime()) || deadline <= new Date()) {
+    writeStatus(groupStatusBox, 'err', 'Choose a future deadline.',
+      ' The group link will lock automatically at that time.');
+    ($('group-deadline-preset').value === 'custom'
+      ? $('group-deadline') : $('group-deadline-preset')).focus();
+    return;
+  }
   const payload = {
     restaurant_id: $('group-store').value,
     organizer_name: $('organizer-name').value.trim(),
     title: $('group-title').value.trim(),
-    expires_in_hours: Number($('group-duration').value),
+    deadline_at: deadline.toISOString(),
   };
   writeStatus(groupStatusBox, 'busy', 'Creating your group link…', '');
   submit.disabled = true;
@@ -385,6 +431,8 @@ fetch('/api/menu-hints').then((response) => response.json()).then((hints) => {
 
 const requestedPath = new URLSearchParams(window.location.search).get('method');
 if (requestedPath === 'group' || requestedPath === 'sheet') selectPath(requestedPath);
+initializeDeadline();
+window.setInterval(renderDeadlineChoice, 60000);
 
 fetch('/api/stores').then(async (response) => {
   const data = await response.json().catch(() => ({}));

@@ -85,6 +85,13 @@ class RoomExpired(RoomNotOpen):
     code = "room_expired"
 
 
+class DeadlinePassed(RoomExpired):
+    """The room still exists, but its organizer-set cutoff has elapsed."""
+
+    status = 409
+    code = "deadline_passed"
+
+
 class OrderNotFound(GroupOrderError):
     status = 404
     code = "order_not_found"
@@ -115,6 +122,41 @@ def _timestamp(value: dt.datetime) -> str:
 
 def _parse_timestamp(value: str) -> dt.datetime:
     return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _deadline(room: dict) -> dt.datetime:
+    """Read the explicit deadline, falling back for rooms created before v3."""
+    return _parse_timestamp(room.get("deadline_at") or room["expires_at"])
+
+
+def _clean_deadline(deadline_at, expires_in_hours, current: dt.datetime) -> dt.datetime:
+    if deadline_at not in (None, ""):
+        if not isinstance(deadline_at, str):
+            raise GroupOrderError("deadline_at must be an ISO 8601 timestamp")
+        try:
+            deadline = dt.datetime.fromisoformat(deadline_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise GroupOrderError("deadline_at must be an ISO 8601 timestamp") from exc
+        if deadline.tzinfo is None:
+            raise GroupOrderError("deadline_at must include a time zone")
+        deadline = deadline.astimezone(dt.timezone.utc)
+    else:
+        if expires_in_hours is None:
+            raise GroupOrderError("deadline_at is required")
+        try:
+            ttl = float(expires_in_hours)
+        except (TypeError, ValueError) as exc:
+            raise GroupOrderError("expires_in_hours must be a number") from exc
+        if not math.isfinite(ttl) or ttl <= 0 or ttl > MAX_TTL_HOURS:
+            raise GroupOrderError(
+                f"expires_in_hours must be greater than 0 and at most {MAX_TTL_HOURS}")
+        deadline = current + dt.timedelta(hours=ttl)
+
+    if deadline <= current:
+        raise GroupOrderError("deadline must be in the future")
+    if deadline > current + dt.timedelta(hours=MAX_TTL_HOURS):
+        raise GroupOrderError(f"deadline must be within {MAX_TTL_HOURS // 24} days")
+    return deadline
 
 
 def _secret_hash(value: str) -> str:
@@ -250,9 +292,11 @@ def _order_values(payload: dict, current: dict | None = None) -> dict:
 def _effective_status(room: dict, now: dt.datetime) -> str:
     if room.get("status") == "closed":
         return "closed"
-    if now >= _parse_timestamp(room["expires_at"]):
-        return "expired"
-    return room.get("status") or "open"
+    if room.get("status") == "locked":
+        return "locked"
+    if now >= _deadline(room):
+        return "locked"
+    return "open"
 
 
 def _public_order(order: dict) -> dict:
@@ -312,6 +356,11 @@ def _summary(orders: list[dict]) -> dict:
 def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
     current = _as_utc(now)
     status = _effective_status(room, current)
+    deadline_at = _timestamp(_deadline(room))
+    deadline_passed = current >= _deadline(room)
+    lock_reason = None
+    if status == "locked":
+        lock_reason = "deadline" if deadline_passed else "manual"
     restaurant_id = room.get("restaurant_id") or menu.TARGET_STORE
     orders, cost_summary = _price_orders(room.get("orders") or [], restaurant_id)
     store = menu.store_summary(restaurant_id)
@@ -323,10 +372,15 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
         "store_name": room.get("store_name") or ((store or {}).get("name")),
         "status": status,
         "accepting_orders": status == "open",
+        "lock_reason": lock_reason,
+        "deadline_passed": deadline_passed,
+        "deadline_at": deadline_at,
+        "server_now": _timestamp(current),
         "created_at": room["created_at"],
         "updated_at": room["updated_at"],
+        # Retained as a compatibility alias for rooms and clients from Task 8.
         "expires_at": room["expires_at"],
-        "locked_at": room.get("locked_at"),
+        "locked_at": (deadline_at if lock_reason == "deadline" else room.get("locked_at")),
         "closed_at": room.get("closed_at"),
         "orders": orders,
         "summary": _summary(orders),
@@ -336,6 +390,7 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
 
 def create(*, title: str = "", organizer_name: str = "",
            restaurant_id: str | None = None,
+           deadline_at: str | None = None,
            expires_in_hours: float = DEFAULT_TTL_HOURS,
            now: dt.datetime | None = None) -> tuple[dict, str]:
     """Create a room and return ``(public_room, organizer_token)``."""
@@ -348,18 +403,13 @@ def create(*, title: str = "", organizer_name: str = "",
     store = menu.store_summary(restaurant_id)
     if store is None:
         raise GroupOrderError("choose an available Kung Fu Tea store")
-    try:
-        ttl = float(expires_in_hours)
-    except (TypeError, ValueError) as exc:
-        raise GroupOrderError("expires_in_hours must be a number") from exc
-    if not math.isfinite(ttl) or ttl <= 0 or ttl > MAX_TTL_HOURS:
-        raise GroupOrderError(f"expires_in_hours must be greater than 0 and at most {MAX_TTL_HOURS}")
+    deadline = _clean_deadline(deadline_at, expires_in_hours, current)
 
     room_id = secrets.token_urlsafe(18)
     organizer_token = secrets.token_urlsafe(32)
     created_at = _timestamp(current)
     room = {
-        "version": 2,
+        "version": 3,
         "id": room_id,
         "title": title,
         "organizer_name": organizer_name,
@@ -368,7 +418,10 @@ def create(*, title: str = "", organizer_name: str = "",
         "status": "open",
         "created_at": created_at,
         "updated_at": created_at,
-        "expires_at": _timestamp(current + dt.timedelta(hours=ttl)),
+        "deadline_at": _timestamp(deadline),
+        # Compatibility alias. New code should use deadline_at.
+        "expires_at": _timestamp(deadline),
+        "deadline_updated_at": created_at,
         "locked_at": None,
         "closed_at": None,
         "organizer_token_hash": _secret_hash(organizer_token),
@@ -412,8 +465,10 @@ def get_for_organizer(room_id: str, organizer_token: str | None, *,
 
 def _require_open(room: dict, now: dt.datetime) -> None:
     status = _effective_status(room, now)
-    if status == "expired":
-        raise RoomExpired("this group order has expired")
+    if status == "closed":
+        raise RoomNotOpen("this group order is closed")
+    if now >= _deadline(room):
+        raise DeadlinePassed("the order deadline has passed; ask the organizer to extend it")
     if status != "open":
         raise RoomNotOpen(f"this group order is {status}")
 
@@ -484,10 +539,10 @@ def delete_order(room_id: str, order_id: str, *, order_token: str | None = None,
         status = _effective_status(room, current)
         organizer_can_manage = _matches_secret(
             organizer_token, room.get("organizer_token_hash"))
-        if status == "expired":
-            raise RoomExpired("this group order has expired")
         if status == "closed":
             raise RoomNotOpen("this group order is closed")
+        if current >= _deadline(room) and not organizer_can_manage:
+            raise DeadlinePassed("the order deadline has passed; ask the organizer to extend it")
         # Locking freezes participant changes while the organizer reviews the
         # room. The organizer can still remove junk or an exact duplicate.
         if status != "open" and not organizer_can_manage:
@@ -516,9 +571,6 @@ def finalize(room_id: str, organizer_token: str | None, *,
         room = _read(room_id)
         if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
             raise Forbidden("the organizer token is missing or invalid")
-        if _effective_status(room, current) == "expired":
-            raise RoomExpired("this group order has expired")
-
         existing = room.get("finalized_run_id")
         if existing and runs.load(existing) is not None:
             return get_for_organizer(room_id, organizer_token, now=current), existing
@@ -562,11 +614,10 @@ def set_status(room_id: str, status: str, organizer_token: str | None, *,
         room = _read(room_id)
         if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
             raise Forbidden("the organizer token is missing or invalid")
-        effective = _effective_status(room, current)
-        if effective == "expired":
-            raise RoomExpired("this group order has expired")
         if room.get("status") == "closed" and status != "closed":
             raise RoomNotOpen("a closed group order cannot be reopened")
+        if status == "open" and current >= _deadline(room):
+            raise DeadlinePassed("extend the deadline before reopening this group order")
         room["status"] = status
         room["updated_at"] = _timestamp(current)
         if status == "locked":
@@ -579,8 +630,32 @@ def set_status(room_id: str, status: str, organizer_token: str | None, *,
         return public_room(room, now=current)
 
 
+def update_deadline(room_id: str, deadline_at, organizer_token: str | None, *,
+                    now: dt.datetime | None = None) -> dict:
+    """Move a room's cutoff. Extending an automatic lock reopens the room.
+
+    A manual pause is preserved: changing its deadline does not accidentally
+    admit participants while the organizer is reviewing submissions.
+    """
+    current = _as_utc(now)
+    with _room_lock(room_id):
+        room = _read(room_id)
+        if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
+            raise Forbidden("the organizer token is missing or invalid")
+        if room.get("status") == "closed":
+            raise RoomNotOpen("a closed group order cannot change its deadline")
+        deadline = _clean_deadline(deadline_at, None, current)
+        timestamp = _timestamp(deadline)
+        room["deadline_at"] = timestamp
+        room["expires_at"] = timestamp
+        room["deadline_updated_at"] = _timestamp(current)
+        room["updated_at"] = _timestamp(current)
+        _write(room)
+        return public_room(room, now=current)
+
+
 def prune(*, now: dt.datetime | None = None, keep: int = KEEP_SESSIONS) -> None:
-    """Discard long-expired rooms and cap the closed/expired archive by age."""
+    """Discard old rooms and cap the closed/deadline-passed archive by age."""
     current = _as_utc(now)
     cutoff = current - dt.timedelta(days=RETENTION_DAYS)
     files = sorted(_directory().glob("*.json"),
@@ -590,7 +665,7 @@ def prune(*, now: dt.datetime | None = None, keep: int = KEEP_SESSIONS) -> None:
         remove = False
         try:
             room = json.loads(path.read_text(encoding="utf-8"))
-            expires_at = _parse_timestamp(room["expires_at"])
+            expires_at = _deadline(room)
             remove = expires_at < cutoff
             if not remove and (expires_at <= current or room.get("status") == "closed"):
                 archived += 1

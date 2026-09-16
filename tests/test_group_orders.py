@@ -51,6 +51,9 @@ class GroupOrderStoreTests(unittest.TestCase):
         self.assertEqual(room["status"], "open")
         self.assertTrue(room["accepting_orders"])
         self.assertEqual(room["expires_at"], "2026-09-01T12:00:00Z")
+        self.assertEqual(room["deadline_at"], "2026-09-01T12:00:00Z")
+        self.assertEqual(room["server_now"], "2026-08-31T12:00:00Z")
+        self.assertFalse(room["deadline_passed"])
         self.assertGreaterEqual(len(room["id"]), 20)
         self.assertNotIn("token", json.dumps(room))
         saved = group_orders.path_for(room["id"]).read_text(encoding="utf-8")
@@ -244,9 +247,66 @@ class GroupOrderStoreTests(unittest.TestCase):
 
         expiring, _token = group_orders.create(expires_in_hours=1, now=now)
         later = now + dt.timedelta(hours=2)
-        self.assertEqual(group_orders.get(expiring["id"], now=later)["status"], "expired")
-        with self.assertRaises(group_orders.RoomExpired):
+        elapsed = group_orders.get(expiring["id"], now=later)
+        self.assertEqual(elapsed["status"], "locked")
+        self.assertEqual(elapsed["lock_reason"], "deadline")
+        self.assertTrue(elapsed["deadline_passed"])
+        with self.assertRaises(group_orders.DeadlinePassed):
             group_orders.add_order(expiring["id"], ORDER, now=later)
+
+    def test_explicit_deadline_automatically_locks_and_can_be_extended(self):
+        now = dt.datetime(2026, 8, 31, 12, 0, tzinfo=dt.timezone.utc)
+        room, organizer_token = group_orders.create(
+            deadline_at="2026-08-31T09:30:00-04:00", now=now)
+        self.assertEqual(room["deadline_at"], "2026-08-31T13:30:00Z")
+
+        after_cutoff = now + dt.timedelta(hours=2)
+        locked = group_orders.get(room["id"], now=after_cutoff)
+        self.assertFalse(locked["accepting_orders"])
+        self.assertEqual(locked["lock_reason"], "deadline")
+        with self.assertRaises(group_orders.DeadlinePassed):
+            group_orders.add_order(room["id"], ORDER, now=after_cutoff)
+
+        reopened = group_orders.update_deadline(
+            room["id"], "2026-08-31T15:00:00Z", organizer_token, now=after_cutoff)
+        self.assertTrue(reopened["accepting_orders"])
+        self.assertFalse(reopened["deadline_passed"])
+        group_orders.add_order(room["id"], ORDER, now=after_cutoff)
+
+    def test_deadline_change_preserves_manual_pause_and_closed_rooms_are_final(self):
+        now = dt.datetime(2026, 8, 31, 12, 0, tzinfo=dt.timezone.utc)
+        room, organizer_token = group_orders.create(now=now)
+        group_orders.set_status(room["id"], "locked", organizer_token, now=now)
+        changed = group_orders.update_deadline(
+            room["id"], "2026-08-31T18:00:00Z", organizer_token, now=now)
+        self.assertEqual(changed["status"], "locked")
+        self.assertEqual(changed["lock_reason"], "manual")
+
+        group_orders.set_status(room["id"], "closed", organizer_token, now=now)
+        with self.assertRaises(group_orders.RoomNotOpen):
+            group_orders.update_deadline(
+                room["id"], "2026-08-31T19:00:00Z", organizer_token, now=now)
+
+    def test_organizer_can_finalize_after_the_automatic_lock(self):
+        now = dt.datetime(2026, 8, 31, 12, 0, tzinfo=dt.timezone.utc)
+        room, organizer_token = group_orders.create(expires_in_hours=1, now=now)
+        group_orders.add_order(room["id"], ORDER, now=now)
+
+        finalized, run_id = group_orders.finalize(
+            room["id"], organizer_token, now=now + dt.timedelta(hours=2))
+
+        self.assertEqual(finalized["status"], "closed")
+        self.assertIsNotNone(runs.load(run_id))
+
+    def test_deadline_validation_rejects_ambiguous_past_and_far_future_values(self):
+        now = dt.datetime(2026, 8, 31, 12, 0, tzinfo=dt.timezone.utc)
+        for invalid in (
+            "2026-08-31T13:00:00",
+            "2026-08-31T11:59:59Z",
+            "2026-09-08T12:00:01Z",
+        ):
+            with self.assertRaises(group_orders.GroupOrderError):
+                group_orders.create(deadline_at=invalid, now=now)
 
     def test_validation_caps_the_public_write_surface(self):
         room, _organizer_token = group_orders.create()
@@ -395,6 +455,8 @@ class GroupOrderHttpTests(unittest.TestCase):
                 self.base + f"/group-order/{room_id}/organizer", timeout=10) as response:
             organizer_page = response.read().decode("utf-8")
         self.assertIn("Organizer dashboard", organizer_page)
+        self.assertIn("Order deadline", organizer_page)
+        self.assertIn('id="deadline-input"', organizer_page)
         self.assertIn("/static/group-order-organizer.js", organizer_page)
 
         status, added = self.request(
@@ -421,12 +483,30 @@ class GroupOrderHttpTests(unittest.TestCase):
             self.assertIn("text/html", response.headers.get("Content-Type", ""))
         self.assertIn("Add your drink", page)
         self.assertIn("Group drinks", page)
+        self.assertIn('id="deadline-countdown"', page)
+        self.assertIn("My usuals", page)
+        self.assertIn("Surprise Me", page)
+        self.assertIn('id="selected-options"', page)
+        self.assertIn('id="edit-drink"', page)
+        self.assertIn('id="remove-drink"', page)
+        self.assertIn("/static/favorites.js", page)
+        self.assertIn("/static/randomizer.js", page)
         self.assertIn("/static/group-order.js", page)
 
         status, public = self.request("GET", created["api_url"])
         self.assertEqual(status, 200)
         self.assertEqual(public["session"]["orders"][0]["person"], "Alice")
         self.assertNotIn("token", json.dumps(public))
+
+        new_deadline = (dt.datetime.now(dt.timezone.utc)
+                        + dt.timedelta(hours=3)).isoformat()
+        status, deadline = self.request(
+            "PATCH", f"/api/group-orders/{room_id}/deadline",
+            {"deadline_at": new_deadline},
+            {"X-Organizer-Token": organizer_token})
+        self.assertEqual(status, 200)
+        self.assertEqual(deadline["session"]["deadline_at"],
+                         group_orders._timestamp(dt.datetime.fromisoformat(new_deadline)))
 
         status, locked = self.request(
             "POST", f"/api/group-orders/{room_id}/lock", {},

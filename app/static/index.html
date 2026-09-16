@@ -91,16 +91,26 @@
             <input id="group-title" name="title" type="text" maxlength="120"
                    autocomplete="off" placeholder="Monday team boba">
           </label>
-          <label class="duration-field" for="group-duration">
-            Keep the link open for
-            <select id="group-duration" name="expires_in_hours">
-              <option value="4">4 hours</option>
-              <option value="8">8 hours</option>
-              <option value="24" selected>24 hours</option>
-              <option value="72">3 days</option>
-              <option value="168">7 days</option>
-            </select>
-          </label>
+          <div class="deadline-field">
+            <label for="group-deadline-preset">
+              Close the order in
+              <select id="group-deadline-preset">
+                <option value="0.5">30 minutes</option>
+                <option value="1">1 hour</option>
+                <option value="2" selected>2 hours</option>
+                <option value="4">4 hours</option>
+                <option value="8">8 hours</option>
+                <option value="24">24 hours</option>
+                <option value="custom">Choose a date &amp; time…</option>
+              </select>
+            </label>
+            <label class="custom-deadline" id="custom-deadline-field" for="group-deadline" hidden>
+              Date &amp; time
+              <input id="group-deadline" name="deadline_at" type="datetime-local">
+            </label>
+            <p class="deadline-preview" id="deadline-preview"></p>
+            <span class="store-help">Uses your local time and locks the participant link automatically.</span>
+          </div>
         </div>
         <button class="btn primary" id="group-submit" type="submit" disabled>Create group link</button>
       </form>

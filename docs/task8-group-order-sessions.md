@@ -12,15 +12,16 @@ cookie is required.
   in the threaded server from overwriting each other.
 - Room IDs carry roughly 144 bits of randomness. Organizer and order-edit
   tokens are returned once and only SHA-256 hashes are persisted.
-- Rooms expire after 24 hours by default. Creation may request any positive TTL
-  up to seven days. Expired rooms remain readable as `status: "expired"` for a
-  seven-day grace period, but cannot be changed.
+- Rooms originally used a 24-hour expiry. Task 14 promotes that timestamp to an
+  explicit organizer-set `deadline_at` (with `expires_at` retained as a response
+  compatibility alias). The deadline may be up to seven days away.
 - The organizer can lock and reopen a room. Locking makes it read-only while the
-  organizer checks the order. Closing is permanent. Both closed and locked rooms
+  organizer checks the order. A passed deadline also presents as locked and can
+  be reopened by extending it. Closing is permanent. Closed and locked rooms
   remain readable.
-- Pruning keeps all live rooms, keeps at most 200 recent closed/expired rooms,
-  and removes rooms more than seven days past expiration. Each room accepts at
-  most 200 order lines.
+- Pruning keeps all live rooms, keeps at most 200 recent closed/deadline-passed
+  rooms, and removes rooms more than seven days past their deadline. Each room
+  accepts at most 200 order lines.
 
 This file store is appropriate for the current single-process app. A deployment
 with multiple server processes should put the same API behind a transactional
@@ -37,7 +38,7 @@ database instead.
   "title": "Monday tea",
   "organizer_name": "Mariam",
   "restaurant_id": "650c9c52d73592bc0e0bd5a7",
-  "expires_in_hours": 24
+  "deadline_at": "2026-09-10T19:30:00Z"
 }
 ```
 
@@ -107,9 +108,10 @@ state, including the saved preview URL after finalization. The public room read
 does not expose that URL.
 
 Send `X-Organizer-Token`. A Bearer token or the matching token in a JSON body is
-also accepted. Locking is reversible; closing and expiration are terminal.
-Finalizing creates an idempotent Task 5 pipeline run and closes the room.
+also accepted. Manual locking is reversible, and a deadline lock can be
+reopened by extending the cutoff; closing is terminal. Finalizing creates an
+idempotent Task 5 pipeline run and closes the room.
 
 Errors are JSON with `ok: false`, a human-readable `error`, and a stable `code`.
-Missing rooms return 404, bad tokens 403, locked/closed writes 409, and expired
-writes 410.
+Missing rooms return 404, bad tokens 403, and locked/closed writes return 409.
+Writes after the cutoff return 409 with `code: "deadline_passed"`.

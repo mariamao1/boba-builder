@@ -40,20 +40,56 @@
       <span>Loading group order…</span>
     </section>
 
-    <section class="card organizer-toolbar" aria-label="Group order controls">
+    <section class="card organizer-toolbar" aria-label="Group order sharing and controls">
       <div class="share-block">
         <p class="step-label">Participant link</p>
         <strong>Invite people to add their drinks</strong>
         <div class="share-actions">
           <button class="btn ghost compact" id="copy-link" type="button">Copy link</button>
+          <button class="btn ghost compact" id="show-qr" type="button">Show full screen</button>
+          <button class="text-button" id="download-qr" type="button">Download QR</button>
           <a class="text-button" id="open-participant" href="#" target="_blank" rel="noopener">Open participant view</a>
         </div>
+        <p class="qr-compact-context" id="qr-compact-context">The QR code opens this participant link.</p>
+        <div class="status qr-status" id="qr-status" role="status" aria-live="polite"></div>
       </div>
+      <button class="qr-invite" id="open-qr" type="button" aria-label="Show participant QR code full screen">
+        <span class="qr-preview-shell">
+          <span class="qr-code qr-code-preview" id="qr-preview" aria-hidden="true"></span>
+        </span>
+        <span class="qr-invite-copy">
+          <strong>Scan to join</strong>
+          <small>Tap for room view</small>
+        </span>
+      </button>
       <div class="session-actions">
         <button class="btn ghost compact" id="refresh" type="button">Refresh now</button>
         <button class="btn ghost compact" id="toggle-lock" type="button" hidden>Pause submissions</button>
         <button class="text-button forget-access" id="forget-access" type="button">Forget token</button>
       </div>
+    </section>
+
+    <section class="card deadline-manager" id="deadline-manager" aria-labelledby="deadline-heading">
+      <div class="deadline-summary">
+        <p class="step-label">Order deadline</p>
+        <h2 id="deadline-heading"><span id="deadline-countdown">Loading countdown…</span></h2>
+        <p id="deadline-detail">The room will lock automatically at the cutoff.</p>
+      </div>
+      <form class="deadline-form" id="deadline-form">
+        <label for="deadline-input">Change cutoff</label>
+        <div class="deadline-input-row">
+          <input id="deadline-input" type="datetime-local" required>
+          <button class="btn primary compact" id="save-deadline" type="submit">Save deadline</button>
+        </div>
+        <div class="deadline-quick-actions" aria-label="Extend deadline">
+          <span>Quick extend</span>
+          <button class="text-button" type="button" data-extend-minutes="15">+15 min</button>
+          <button class="text-button" type="button" data-extend-minutes="30">+30 min</button>
+          <button class="text-button" type="button" data-extend-minutes="60">+1 hour</button>
+        </div>
+        <p class="deadline-help" id="deadline-help">Extending a passed deadline reopens submissions. A manual pause stays paused.</p>
+        <div class="status" id="deadline-status" role="status" aria-live="polite"></div>
+      </form>
     </section>
 
     <section class="summary-grid" aria-label="Running totals">
@@ -112,6 +148,27 @@
   </div>
 </main>
 
+<dialog class="qr-dialog" id="qr-dialog" aria-labelledby="qr-dialog-title" aria-describedby="qr-dialog-context">
+  <button class="qr-dialog-close" id="close-qr" type="button" aria-label="Close QR code">×</button>
+  <div class="qr-dialog-copy">
+    <p class="step-label">Scan to join</p>
+    <h2 id="qr-dialog-title">Group order</h2>
+    <p id="qr-dialog-store"></p>
+  </div>
+  <div class="qr-large-shell">
+    <div class="qr-code qr-code-large" id="qr-large" aria-hidden="true"></div>
+  </div>
+  <div class="qr-dialog-context" id="qr-dialog-context">
+    <strong id="qr-dialog-deadline">Scan with your phone camera</strong>
+    <span id="qr-dialog-url"></span>
+  </div>
+  <div class="qr-dialog-actions">
+    <button class="btn primary" id="download-qr-dialog" type="button">Download QR</button>
+    <button class="btn ghost" id="close-qr-button" type="button">Close</button>
+  </div>
+</dialog>
+
+<script src="/static/vendor/qrcode.min.js"></script>
 <script src="/static/group-order-organizer.js"></script>
 </body>
 </html>

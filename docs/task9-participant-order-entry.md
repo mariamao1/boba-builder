@@ -15,6 +15,8 @@ This keeps participant orders exact without free-text or fuzzy matching.
 ## Participant flow
 
 - Search the real menu or filter it by the store's category order.
+- Use **Surprise Me** for a valid random draft, optionally limited by the active
+  category, then re-roll or edit any choice before submitting.
 - Pick only the size, sugar, ice, topping, and milk options that the chosen
   drink actually offers. Required groups are enforced before submission.
 - Add a name, quantity, and optional note, then submit directly to the room.

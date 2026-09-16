@@ -147,7 +147,18 @@ main > .back-row.top-links:first-child { justify-content: flex-end; margin: 1rem
   margin-bottom: 1rem;
 }
 .group-form-grid .store-field { grid-column: 1 / -1; }
-.group-form-grid .duration-field { grid-column: 1 / -1; max-width: 14rem; }
+.group-form-grid .deadline-field {
+  grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .55rem .8rem; padding: .85rem; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--bg-tint);
+}
+.deadline-field > label { margin: 0; }
+.deadline-field .store-help { grid-column: 1 / -1; margin: 0; }
+.deadline-preview {
+  grid-column: 1 / -1; margin: .05rem 0 0; color: var(--brand);
+  font-size: .88rem; font-weight: 650;
+}
+.custom-deadline[hidden] { display: none; }
 .group-form-grid input, .group-form-grid select { display: block; margin-top: .3rem; }
 .store-picker { position: relative; }
 .store-picker input[type=search] { margin-top: .3rem; }
@@ -261,7 +272,7 @@ details[open] summary { margin-bottom: .5rem; }
 .chosen strong { font-weight: 600; }
 
 form label { display: block; font-weight: 500; margin-bottom: .3rem; }
-input[type=url], input[type=text], input[type=search], select {
+input[type=url], input[type=text], input[type=search], input[type=datetime-local], select {
   width: 100%; padding: .6rem .7rem; font: inherit; color: var(--ink);
   background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
 }
@@ -533,9 +544,94 @@ table.orders td .drink-input { min-width: 8rem; }
 @media (max-width: 520px) {
   .path-grid, .group-form-grid, .flow-heading { grid-template-columns: 1fr; }
   .path-card { min-height: 0; }
-  .group-form-grid .store-field, .group-form-grid .duration-field {
-    grid-column: auto; max-width: none;
-  }
+  .group-form-grid .store-field, .group-form-grid .deadline-field { grid-column: auto; }
+  .group-form-grid .deadline-field { grid-template-columns: 1fr; }
   .reconciliation-stats { grid-template-columns: 1fr; }
   .save-order-form { grid-template-columns: 1fr; }
+}
+
+/* --- pickup labels -------------------------------------------------------- */
+
+/* One card per cup for the runner at the counter: a big name to call out,
+   the exact drink underneath, and a checkbox to mark each handoff. Tapping
+   anywhere on the card toggles it, which is the whole interaction with a
+   tray in one hand and a phone in the other. */
+.pickup-labels { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.pickup-labels h3 { margin: 0 0 .25rem; }
+.pickup-hint { margin: 0 0 .8rem; }
+.pickup-holder { display: grid; gap: 1rem; margin-top: .9rem; }
+.pickup-text { white-space: pre-wrap; font-size: .9rem; }
+.pickup-print-head { display: none; }
+.pickup-actions { margin-top: 0; }
+.pickup-progress { margin: .7rem 0 0; font-variant-numeric: tabular-nums; }
+.label-group h4 {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 1rem;
+  margin: 0 0 .5rem; font-size: 1rem;
+}
+.label-count { color: var(--muted); font-size: .82rem; font-weight: 400; }
+.label-card {
+  display: flex; gap: .7rem; align-items: flex-start; padding: .7rem .8rem;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+  cursor: pointer; margin-bottom: .45rem;
+}
+.label-card.handed-out { opacity: .55; }
+.label-card.handed-out .label-drink { text-decoration: line-through; }
+.pickup-check { width: 1.35rem; height: 1.35rem; margin-top: .15rem; flex: none; accent-color: var(--ok); }
+.label-body { display: grid; gap: .1rem; min-width: 0; }
+.label-top { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.label-person { font-size: 1.15rem; }
+.label-seq {
+  flex: none; font-size: .75rem; font-weight: 700; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px; padding: .05rem .4rem;
+  font-variant-numeric: tabular-nums;
+}
+.label-drink { font-weight: 600; }
+.label-cup { font-size: .8rem; }
+.label-notes { font-size: .88rem; color: var(--brand); }
+
+/* Printing turns the on-screen checklist into cut-out slips: only the card
+   carrying the labels prints, everything interactive stays on the phone, and
+   each cup gets a dashed card of its own. */
+@media print {
+  body.printing-labels header,
+  body.printing-labels nav,
+  body.printing-labels .steps,
+  body.printing-labels .footnote,
+  body.printing-labels .actions,
+  body.printing-labels .pickup-hint,
+  body.printing-labels .pickup-progress,
+  body.printing-labels .pickup-check,
+  body.printing-labels .attention-callout { display: none !important; }
+  body.printing-labels { background: #fff; color: #000; }
+  body.printing-labels main .card { display: none !important; }
+  body.printing-labels main .card.pickup-card {
+    display: block !important; border: 0; box-shadow: none; padding: 0; margin: 0;
+  }
+  /* The labels share their card with the cart review, so only their own
+     subtree prints — first the card's children, then the review's. */
+  body.printing-labels .card.pickup-card > * { display: none !important; }
+  body.printing-labels .card.pickup-card > .cart-status,
+  body.printing-labels .card.pickup-card > .pickup-labels { display: block !important; }
+  body.printing-labels .card.pickup-card > .cart-status {
+    background: none; border: 0; padding: 0; margin: 0;
+  }
+  body.printing-labels .card.pickup-card .cart-status > * { display: none !important; }
+  body.printing-labels .card.pickup-card .cart-status > .pickup-labels {
+    display: block !important;
+  }
+  body.printing-labels .pickup-labels { border: 0; padding: 0; margin: 0; }
+  body.printing-labels .pickup-print-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .8rem; font-size: 1.1rem;
+  }
+  body.printing-labels .label-group h4 { color: #000; }
+  body.printing-labels .label-card {
+    break-inside: avoid; border: 1.5px dashed #000; background: #fff;
+    cursor: default; margin-bottom: .6rem;
+  }
+  body.printing-labels .label-card.handed-out { opacity: 1; }
+  body.printing-labels .label-card.handed-out .label-drink { text-decoration: none; }
+  body.printing-labels .label-person,
+  body.printing-labels .label-drink,
+  body.printing-labels .label-notes { color: #000; }
 }

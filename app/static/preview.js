@@ -1005,6 +1005,47 @@ function cartTotals(cart) {
   return block;
 }
 
+/* Pickup labels: one card per cup for the runner at the counter. Fetched on
+   demand so opening the cart review stays a single read; the shared
+   BobaLabels renderer paints the server's answer the same way everywhere. */
+function pickupLabels(cart) {
+  if (!cart || !cart.review_ready) return null;
+  const section = el('div', 'pickup-labels');
+  section.append(el('h3', null, 'Pickup labels'));
+  section.append(el('p', 'muted pickup-hint',
+    'One card per cup, grouped by person so each handoff is a single call-out. '
+    + 'Open them at the counter — checking cups off and printing both work from a phone.'));
+  const actions = el('div', 'actions');
+  const open = el('button', 'btn', 'Show pickup labels');
+  open.type = 'button';
+  actions.append(open);
+  const status = el('p', 'muted');
+  const holder = el('div', 'pickup-holder');
+  section.append(actions, status, holder);
+  open.addEventListener('click', async () => {
+    open.disabled = true;
+    status.textContent = 'Loading labels…';
+    try {
+      const response = await fetch(`/api/runs/${runId}/labels`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.error || 'labels are unavailable');
+      status.textContent = '';
+      open.style.display = 'none';
+      if (typeof BobaLabels !== 'undefined' && BobaLabels && BobaLabels.render) {
+        const card = section.closest ? section.closest('section.card') : null;
+        if (card && card.classList) card.classList.add('pickup-card');
+        BobaLabels.render(holder, data);
+      } else {
+        holder.append(el('pre', 'pickup-text', data.text || ''));
+      }
+    } catch (error) {
+      status.textContent = error.message;
+      open.disabled = false;
+    }
+  });
+  return section;
+}
+
 function showCartResult(outcome, run) {
   const cart = run.cart || null;
   const handoff = run.handoff_url;
@@ -1033,6 +1074,8 @@ function showCartResult(outcome, run) {
   if (cart) {
     outcome.append(cartReconciliation(cart));
     outcome.append(cartManifest(cart));
+    const pickup = pickupLabels(cart);
+    if (pickup) outcome.append(pickup);
     const failed = cartProblems('Could not add', cart.failed, 'error');
     if (failed) outcome.append(failed);
     const skipped = cartProblems('Not mapped, so not added', cart.skipped, 'warning');

@@ -422,6 +422,10 @@ class ServerTests(unittest.TestCase):
         self.assertIn('id="store-search"', page)
         self.assertIn('role="combobox"', page)
         self.assertIn('id="store-results"', page)
+        self.assertIn('id="group-deadline-preset"', page)
+        self.assertIn('value="0.5">30 minutes', page)
+        self.assertIn('value="1">1 hour', page)
+        self.assertIn('id="deadline-preview"', page)
         self.assertIn('id="file-form"', page)
 
         _status, script, _headers = self.get("/static/app.js")

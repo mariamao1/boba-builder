@@ -197,6 +197,42 @@ function manifest(items) {
   return list;
 }
 
+/* Pickup labels: one card per cup for the runner at the counter. Fetched on
+   demand so the detail page stays a single read; the shared BobaLabels
+   renderer paints the server's answer the same way as the cart review. */
+function pickupLabels(order) {
+  const section = el('section', 'pickup-labels');
+  section.append(el('h3', null, 'Pickup labels'));
+  section.append(el('p', 'muted pickup-hint',
+    'One card per cup, grouped by person so each handoff is a single call-out. '
+    + 'Open them at the counter — checking cups off and printing both work from a phone.'));
+  const actions = el('div', 'actions');
+  const open = el('button', 'btn', 'Show pickup labels');
+  open.type = 'button';
+  actions.append(open);
+  const status = el('p', 'muted');
+  const holder = el('div', 'pickup-holder');
+  section.append(actions, status, holder);
+  open.addEventListener('click', async () => {
+    open.disabled = true;
+    status.textContent = 'Loading labels…';
+    try {
+      const data = await request(`/api/saved-orders/${encodeURIComponent(order.id)}/labels`);
+      status.textContent = '';
+      open.style.display = 'none';
+      if (typeof BobaLabels !== 'undefined' && BobaLabels && BobaLabels.render) {
+        BobaLabels.render(holder, data);
+      } else {
+        holder.append(el('pre', 'pickup-text', data.text || ''));
+      }
+    } catch (error) {
+      status.textContent = error.message;
+      open.disabled = false;
+    }
+  });
+  return section;
+}
+
 function problemList(title, entries) {
   if (!entries || !entries.length) return null;
   const section = el('section', 'saved-problems');
@@ -298,10 +334,11 @@ function renderDetail(order) {
   exportButton.addEventListener('click', downloadExport(order, exportButton, feedback));
   body.append(summary);
 
-  const detail = el('section', 'card');
+  const detail = el('section', 'card pickup-card');
   detail.append(el('h2', null, 'Who gets what'));
   if ((order.items || []).length) detail.append(manifest(order.items));
   else detail.append(el('p', 'muted', 'No drinks were recorded in this cart.'));
+  detail.append(pickupLabels(order));
   const failed = problemList('Could not be placed', order.failed);
   if (failed) detail.append(failed);
   const skipped = problemList('Not mapped, so not placed', order.skipped);

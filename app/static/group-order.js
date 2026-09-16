@@ -5,30 +5,49 @@ const roomId = window.location.pathname.split('/').filter(Boolean).pop();
 const apiBase = `/api/group-orders/${encodeURIComponent(roomId)}`;
 const storageKey = `boba-builder:group-order:${roomId}:orders`;
 const nameKey = `boba-builder:group-order:${roomId}:name`;
+const participantNameKey = 'boba-builder:participant-name';
 const MAX_VISIBLE_DRINKS = 40;
 
 const elements = {
   roomTitle: document.getElementById('room-title'),
   roomSubtitle: document.getElementById('room-subtitle'),
   roomStrip: document.getElementById('room-strip'),
+  deadlineCard: document.getElementById('deadline-card'),
+  deadlineCountdown: document.getElementById('deadline-countdown'),
+  deadlineDetail: document.getElementById('deadline-detail'),
   orderCard: document.getElementById('order-card'),
   form: document.getElementById('order-form'),
   formTitle: document.getElementById('form-title'),
   person: document.getElementById('person-name'),
+  favoritesPanel: document.getElementById('favorites-panel'),
+  favoritesList: document.getElementById('favorites-list'),
+  favoritesCount: document.getElementById('favorites-count'),
+  favoriteStatus: document.getElementById('favorite-status'),
   picker: document.getElementById('drink-picker'),
   search: document.getElementById('drink-search'),
   menuCount: document.getElementById('menu-count'),
   categories: document.getElementById('category-list'),
   drinkList: document.getElementById('drink-list'),
   menuMore: document.getElementById('menu-more'),
+  surpriseMe: document.getElementById('surprise-me'),
+  surpriseHint: document.getElementById('surprise-hint'),
   editor: document.getElementById('drink-editor'),
   selectedName: document.getElementById('selected-name'),
   selectedDescription: document.getElementById('selected-description'),
+  selectedOptions: document.getElementById('selected-options'),
   selectedPrice: document.getElementById('selected-price'),
-  changeDrink: document.getElementById('change-drink'),
+  rerollDrink: document.getElementById('reroll-drink'),
+  editDrink: document.getElementById('edit-drink'),
+  removeDrink: document.getElementById('remove-drink'),
   modifiers: document.getElementById('modifier-groups'),
   quantity: document.getElementById('quantity'),
   notes: document.getElementById('notes'),
+  favoriteSave: document.getElementById('favorite-save'),
+  saveFavorite: document.getElementById('save-favorite'),
+  favoriteToggleTitle: document.getElementById('favorite-toggle-title'),
+  favoriteToggleHelp: document.getElementById('favorite-toggle-help'),
+  favoriteNameField: document.getElementById('favorite-name-field'),
+  favoriteName: document.getElementById('favorite-name'),
   total: document.getElementById('estimated-total'),
   submit: document.getElementById('submit-drink'),
   cancelEdit: document.getElementById('cancel-edit'),
@@ -44,8 +63,12 @@ let activeCategory = '';
 let selectedItem = null;
 let selections = {};
 let editingOrderId = null;
+let editingFavoriteId = null;
+let addingFavoriteId = null;
 let refreshing = false;
 let ownedOrders = readStorage(storageKey, {});
+let serverOffsetMs = 0;
+let deadlineTransitionHandled = false;
 
 function readStorage(key, fallback) {
   try {
@@ -88,7 +111,10 @@ async function request(url, options) {
     data = {};
   }
   if (!response.ok || !data.ok) {
-    throw new Error(data.error || 'Something went wrong. Please try again.');
+    const error = new Error(data.error || 'Something went wrong. Please try again.');
+    error.status = response.status;
+    error.code = data.code;
+    throw error;
   }
   return data;
 }
@@ -98,13 +124,80 @@ function setFormStatus(message, kind) {
   elements.formStatus.textContent = message || '';
 }
 
+function setFavoriteStatus(message, kind) {
+  elements.favoriteStatus.className = `favorite-status${kind ? ` ${kind}` : ''}`;
+  elements.favoriteStatus.textContent = message || '';
+}
+
 function formatDeadline(timestamp) {
   if (!timestamp) return '';
   const value = new Date(timestamp);
   if (Number.isNaN(value.getTime())) return '';
   return new Intl.DateTimeFormat(undefined, {
-    weekday: 'short', hour: 'numeric', minute: '2-digit',
+    weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   }).format(value);
+}
+
+function setSession(updated) {
+  session = updated;
+  const serverTime = new Date(updated.server_now).getTime();
+  if (Number.isFinite(serverTime)) serverOffsetMs = serverTime - Date.now();
+  deadlineTransitionHandled = !updated.accepting_orders;
+}
+
+function deadlineRemaining() {
+  if (!session) return 0;
+  const deadline = new Date(session.deadline_at || session.expires_at).getTime();
+  return Number.isFinite(deadline) ? deadline - (Date.now() + serverOffsetMs) : 0;
+}
+
+function countdownText(milliseconds) {
+  const total = Math.max(0, Math.ceil(milliseconds / 1000));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (days) return `${days}d ${hours}h ${minutes}m left`;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s left`;
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s left`;
+}
+
+function renderDeadline() {
+  if (!session) return;
+  const exact = formatDeadline(session.deadline_at || session.expires_at);
+  const passed = session.deadline_passed || deadlineRemaining() <= 0;
+  if (session.status === 'closed') {
+    elements.deadlineCard.className = 'deadline-card closed';
+    elements.deadlineCountdown.textContent = 'Order closed';
+    elements.deadlineDetail.textContent = exact ? `The cutoff was ${exact}. Submitted drinks are read-only.` : 'Submitted drinks are read-only.';
+  } else if (passed) {
+    elements.deadlineCard.className = 'deadline-card closed';
+    elements.deadlineCountdown.textContent = 'Deadline passed';
+    elements.deadlineDetail.textContent = 'New drinks and edits are locked. Ask the organizer if you arrived late.';
+  } else if (session.status === 'locked') {
+    elements.deadlineCard.className = 'deadline-card paused';
+    elements.deadlineCountdown.textContent = 'Submissions paused';
+    elements.deadlineDetail.textContent = `${countdownText(deadlineRemaining())} · cutoff ${exact}`;
+  } else {
+    elements.deadlineCard.className = 'deadline-card';
+    elements.deadlineCountdown.textContent = countdownText(deadlineRemaining());
+    elements.deadlineDetail.textContent = `Submit by ${exact}. The order locks automatically.`;
+  }
+}
+
+function tickDeadline() {
+  if (!session) return;
+  renderDeadline();
+  if (session.accepting_orders && deadlineRemaining() <= 0 && !deadlineTransitionHandled) {
+    deadlineTransitionHandled = true;
+    session.accepting_orders = false;
+    session.deadline_passed = true;
+    session.status = 'locked';
+    session.lock_reason = 'deadline';
+    renderRoom();
+    renderGroupOrders();
+    refreshSession(false);
+  }
 }
 
 function renderRoom() {
@@ -119,20 +212,25 @@ function renderRoom() {
   elements.roomStrip.append(node('span', 'status-dot'));
   const summary = node('span');
   if (session.accepting_orders) {
-    const deadline = formatDeadline(session.expires_at);
     summary.append(node('strong', null, 'Open for drinks'));
     summary.append(document.createTextNode(
       ` · ${plural(session.summary.drinks, 'drink')} from ${plural(session.summary.people, 'person', 'people')}`
-      + (deadline ? ` · closes ${deadline}` : '')
     ));
   } else {
-    const labels = { locked: 'temporarily locked', closed: 'closed', expired: 'expired' };
+    const labels = {
+      locked: session.lock_reason === 'deadline' ? 'closed for new drinks' : 'temporarily paused',
+      closed: 'finalized', expired: 'expired',
+    };
     summary.append(node('strong', null, `This order is ${labels[session.status] || session.status}`));
-    summary.append(document.createTextNode(' · no changes can be made right now'));
+    summary.append(document.createTextNode(
+      session.lock_reason === 'deadline'
+        ? ' · the deadline has passed'
+        : ' · no participant changes can be made right now'));
   }
   elements.roomStrip.append(summary);
   elements.orderCard.classList.toggle('hidden', !session.accepting_orders);
   if (!session.accepting_orders && editingOrderId) resetEditor();
+  renderDeadline();
 }
 
 function renderCategories() {
@@ -151,6 +249,23 @@ function renderCategories() {
     });
     elements.categories.append(button);
   });
+  renderSurpriseControls();
+}
+
+function renderSurpriseControls() {
+  const randomizer = window.BobaRandomizer;
+  const choices = menu && randomizer
+    ? randomizer.eligibleItems(menu, activeCategory) : [];
+  elements.surpriseMe.disabled = !choices.length;
+  if (!menu) {
+    elements.surpriseHint.textContent = 'Picking an orderable drink and options…';
+  } else if (!choices.length) {
+    elements.surpriseHint.textContent = 'Surprise Me is for drinks—choose All or another category.';
+  } else if (activeCategory) {
+    elements.surpriseHint.textContent = `A random ${activeCategory} drink with valid options, ready to tweak.`;
+  } else {
+    elements.surpriseHint.textContent = 'A random menu drink with valid options, ready to tweak.';
+  }
 }
 
 function normalized(value) {
@@ -197,23 +312,39 @@ function initialSelection(group) {
   return '';
 }
 
-function chooseDrink(item, existing) {
+function chooseDrink(item, existing, chosenSelections) {
   selectedItem = item;
   selections = {};
   item.option_groups.forEach((group) => {
     selections[group.key] = initialSelection(group);
   });
   if (existing) fillExistingSelections(existing);
+  if (chosenSelections) selections = chosenSelections;
 
   elements.picker.classList.add('hidden');
   elements.editor.classList.remove('hidden');
   elements.selectedName.textContent = item.name;
   elements.selectedDescription.textContent = item.description || '';
   elements.selectedPrice.textContent = money(item.price);
+  elements.removeDrink.setAttribute('aria-label', `Remove ${item.name}`);
   renderModifiers();
   updateEstimate();
   setFormStatus('', '');
-  elements.formTitle.textContent = editingOrderId ? 'Edit your drink' : 'Make it yours';
+  if (editingFavoriteId) elements.formTitle.textContent = 'Edit your usual';
+  else elements.formTitle.textContent = editingOrderId ? 'Edit your drink' : 'Make it yours';
+  updateFavoriteSaveControls();
+}
+
+function surpriseMe() {
+  if (!menu || !window.BobaRandomizer) return;
+  const surprise = window.BobaRandomizer.pick(menu, activeCategory);
+  if (!surprise) {
+    setFormStatus('No orderable drinks are available in this category.', 'err');
+    return;
+  }
+  chooseDrink(surprise.item, null, surprise.selections);
+  setFormStatus(`✨ Surprise! We picked ${surprise.item.name}. Tweak anything, re-roll, or add it as-is.`,
+    'surprise');
 }
 
 function fillExistingSelections(order) {
@@ -330,17 +461,21 @@ function selectedOption(group, label) {
 function updateEstimate() {
   if (!selectedItem) {
     elements.total.textContent = '—';
+    elements.selectedOptions.textContent = '';
     return;
   }
   let price = Number(selectedItem.price || 0);
+  const summary = [];
   selectedItem.option_groups.forEach((group) => {
     const values = Array.isArray(selections[group.key])
       ? selections[group.key] : [selections[group.key]].filter(Boolean);
+    if (values.length) summary.push(`${group.name}: ${values.join(', ')}`);
     values.forEach((value) => {
       const option = selectedOption(group, value);
       price += Number((option && option.price) || 0);
     });
   });
+  elements.selectedOptions.textContent = summary.length ? summary.join(' · ') : 'Store defaults';
   const quantity = Math.max(1, Math.min(20, Number(elements.quantity.value) || 1));
   elements.total.textContent = money(price * quantity);
 }
@@ -403,8 +538,10 @@ function forgetOrder(orderId) {
 function resetEditor(options) {
   const keepStatus = options && options.keepStatus;
   editingOrderId = null;
+  editingFavoriteId = null;
   selectedItem = null;
   selections = {};
+  elements.person.required = true;
   elements.quantity.value = '1';
   elements.notes.value = '';
   elements.editor.classList.add('hidden');
@@ -412,16 +549,166 @@ function resetEditor(options) {
   elements.cancelEdit.classList.add('hidden');
   elements.submit.textContent = 'Add my drink';
   elements.formTitle.textContent = 'Choose something good';
+  elements.saveFavorite.checked = false;
+  elements.saveFavorite.disabled = false;
+  elements.favoriteName.value = '';
+  elements.favoriteName.required = false;
+  elements.favoriteNameField.classList.add('hidden');
+  elements.favoriteToggleTitle.textContent = 'Save as a usual';
   elements.search.value = '';
   if (!keepStatus) setFormStatus('', '');
   renderDrinkList();
 }
 
 function orderDetails(order) {
-  const parts = [order.size, order.sugar, order.ice, order.milk].filter(Boolean);
+  const parts = [order.size, order.sugar, order.ice, order.milk, order.temperature].filter(Boolean);
   if (order.toppings && order.toppings.length) parts.push(order.toppings.join(', '));
   if (order.notes) parts.push(order.notes);
   return parts.length ? parts.join(' · ') : 'Store defaults';
+}
+
+function favoritesForStore() {
+  if (!menu) return [];
+  return window.BobaFavorites.list(window.localStorage, menu.restaurant_id);
+}
+
+function updateFavoriteSaveControls() {
+  if (!menu) return;
+  const atLimit = favoritesForStore().length >= window.BobaFavorites.MAX_PER_STORE;
+  if (editingFavoriteId) {
+    elements.saveFavorite.checked = true;
+    elements.saveFavorite.disabled = true;
+    elements.favoriteName.required = true;
+    elements.favoriteNameField.classList.remove('hidden');
+    elements.favoriteToggleTitle.textContent = 'Editing this usual';
+    elements.favoriteToggleHelp.textContent = 'Its drink, options, quantity, and notes will be replaced.';
+    return;
+  }
+  elements.saveFavorite.disabled = atLimit;
+  elements.favoriteName.required = elements.saveFavorite.checked;
+  elements.favoriteNameField.classList.toggle('hidden', !elements.saveFavorite.checked);
+  elements.favoriteToggleTitle.textContent = 'Save as a usual';
+  elements.favoriteToggleHelp.textContent = atLimit
+    ? `You already have ${window.BobaFavorites.MAX_PER_STORE} usuals for this store.`
+    : 'Keep this drink and every option in this browser.';
+}
+
+function renderFavorites() {
+  if (!menu) return;
+  const favorites = favoritesForStore();
+  elements.favoritesPanel.classList.toggle('hidden', !favorites.length);
+  elements.favoritesCount.textContent = `${favorites.length}/${window.BobaFavorites.MAX_PER_STORE}`;
+  elements.favoritesList.textContent = '';
+
+  favorites.forEach((favorite) => {
+    const check = window.BobaFavorites.compatibility(favorite, menu);
+    const card = node('article', `favorite-card${check.ok ? '' : ' needs-review'}`);
+    const copy = node('div', 'favorite-copy');
+    copy.append(node('h4', null, favorite.name));
+    copy.append(node('p', 'favorite-drink', favorite.drink));
+    copy.append(node('p', 'favorite-detail muted', orderDetails(favorite)));
+    if (!check.ok) copy.append(node('p', 'favorite-warning', check.reason));
+
+    const primary = node('button', `btn ${check.ok ? 'primary' : 'ghost'} compact favorite-add`,
+      addingFavoriteId === favorite.id ? 'Adding…'
+        : (check.ok ? 'Add' : (check.item ? 'Review' : 'Unavailable')));
+    primary.type = 'button';
+    primary.disabled = Boolean(addingFavoriteId) || !check.item;
+    if (check.ok) primary.addEventListener('click', () => addFavorite(favorite));
+    else if (check.item) primary.addEventListener('click', () => editFavorite(favorite));
+
+    const actions = node('div', 'favorite-actions');
+    const edit = node('button', 'text-button', 'Edit');
+    edit.type = 'button';
+    edit.disabled = Boolean(addingFavoriteId) || !check.item;
+    edit.addEventListener('click', () => editFavorite(favorite));
+    actions.append(edit);
+    const remove = node('button', 'text-button delete-favorite', 'Delete');
+    remove.type = 'button';
+    remove.disabled = Boolean(addingFavoriteId);
+    remove.addEventListener('click', () => deleteFavorite(favorite));
+    actions.append(remove);
+    card.append(copy, primary, actions);
+    elements.favoritesList.append(card);
+  });
+  updateFavoriteSaveControls();
+}
+
+async function addFavorite(favorite) {
+  const person = elements.person.value.trim();
+  if (!person) {
+    setFavoriteStatus('Add your name first, then tap Add again.', 'err');
+    elements.person.reportValidity();
+    elements.person.focus();
+    return;
+  }
+  const check = window.BobaFavorites.compatibility(favorite, menu);
+  if (!check.ok) {
+    setFavoriteStatus(check.reason, 'err');
+    if (check.item) editFavorite(favorite);
+    return;
+  }
+
+  addingFavoriteId = favorite.id;
+  setFavoriteStatus(`Adding ${favorite.name}…`, 'busy');
+  renderFavorites();
+  try {
+    const data = await request(`${apiBase}/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...check.payload, person: person }),
+    });
+    setSession(data.session);
+    rememberOrder(data.order.id, data.order_token);
+    writeStorage(participantNameKey, person);
+    writeStorage(nameKey, person);
+    setFavoriteStatus(`${favorite.name} was added to the group order.`, 'ok');
+    renderRoom();
+    renderGroupOrders();
+  } catch (error) {
+    setFavoriteStatus(error.message, 'err');
+    if (error.code === 'deadline_passed') refreshSession(false);
+  } finally {
+    addingFavoriteId = null;
+    renderFavorites();
+  }
+}
+
+function editFavorite(favorite) {
+  const item = window.BobaFavorites.findItem(favorite, menu);
+  if (!item) {
+    setFavoriteStatus('That saved drink is no longer available on this store menu.', 'err');
+    return;
+  }
+  editingOrderId = null;
+  editingFavoriteId = favorite.id;
+  elements.person.required = false;
+  elements.quantity.value = String(favorite.quantity || 1);
+  elements.notes.value = favorite.notes || '';
+  elements.favoriteName.value = favorite.name;
+  elements.cancelEdit.classList.remove('hidden');
+  elements.submit.textContent = 'Save usual';
+  chooseDrink(item, favorite);
+  elements.orderCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function deleteFavorite(favorite) {
+  if (!window.confirm(`Delete “${favorite.name}” from My usuals?`)) return;
+  try {
+    window.BobaFavorites.remove(window.localStorage, favorite.id);
+    if (editingFavoriteId === favorite.id) resetEditor();
+    setFavoriteStatus(`${favorite.name} was deleted.`, 'ok');
+    renderFavorites();
+  } catch (_error) {
+    setFavoriteStatus('This usual could not be deleted from browser storage.', 'err');
+  }
+}
+
+function saveFavorite(payload, existing) {
+  const favorite = window.BobaFavorites.fromOrder(
+    elements.favoriteName.value, payload, menu.restaurant_id, selectedItem, existing
+  );
+  return window.BobaFavorites.save(window.localStorage, favorite);
 }
 
 function renderGroupOrders() {
@@ -473,12 +760,16 @@ function editOrder(order) {
     setFormStatus('That drink is no longer on this captured menu, so it cannot be edited here.', 'err');
     return;
   }
+  editingFavoriteId = null;
   editingOrderId = order.id;
+  elements.person.required = true;
   elements.person.value = order.person;
   elements.quantity.value = String(order.quantity || 1);
   elements.notes.value = order.notes || '';
   elements.cancelEdit.classList.remove('hidden');
   elements.submit.textContent = 'Save changes';
+  elements.saveFavorite.checked = false;
+  elements.favoriteName.value = '';
   chooseDrink(item, order);
   elements.orderCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -492,19 +783,38 @@ async function deleteOrder(order) {
       method: 'DELETE',
       headers: { 'X-Order-Token': ownership.token },
     });
-    session = data.session;
+    setSession(data.session);
     forgetOrder(order.id);
     if (editingOrderId === order.id) resetEditor();
     renderRoom();
     renderGroupOrders();
   } catch (error) {
     window.alert(error.message);
+    if (error.code === 'deadline_passed') refreshSession(false);
   }
 }
 
 async function submitOrder(event) {
   event.preventDefault();
   if (!selectedItem) return;
+  if (editingFavoriteId) {
+    if (!elements.quantity.reportValidity() || !elements.favoriteName.reportValidity()
+        || !validateSelections()) return;
+    const existing = favoritesForStore().find((favorite) => favorite.id === editingFavoriteId);
+    if (!existing) {
+      setFormStatus('That usual is no longer saved in this browser.', 'err');
+      return;
+    }
+    try {
+      const saved = saveFavorite(buildPayload(), existing);
+      resetEditor({ keepStatus: true });
+      setFormStatus(`${saved.name} was updated.`, 'ok');
+      renderFavorites();
+    } catch (error) {
+      setFormStatus(error.message || 'This usual could not be saved.', 'err');
+    }
+    return;
+  }
   if (!elements.form.reportValidity() || !validateSelections()) return;
 
   elements.submit.disabled = true;
@@ -521,16 +831,32 @@ async function submitOrder(event) {
       },
       body: JSON.stringify(payload),
     });
-    session = data.session;
+    setSession(data.session);
     if (!orderId) rememberOrder(data.order.id, data.order_token);
-    writeStorage(nameKey, elements.person.value.trim());
+    const person = elements.person.value.trim();
+    writeStorage(participantNameKey, person);
+    writeStorage(nameKey, person);
+    let savedFavorite = null;
+    let favoriteError = '';
+    if (elements.saveFavorite.checked) {
+      try {
+        savedFavorite = saveFavorite(payload, null);
+      } catch (error) {
+        favoriteError = error.message || 'it could not be saved as a usual';
+      }
+    }
     resetEditor({ keepStatus: true });
-    setFormStatus(orderId ? 'Your drink was updated.' : 'Drink added. Pick another if you would like!', 'ok');
+    let message = orderId ? 'Your drink was updated.' : 'Drink added. Pick another if you would like!';
+    if (savedFavorite) message += ` ${savedFavorite.name} is now in My usuals.`;
+    if (favoriteError) message += ` The drink was added, but ${favoriteError}`;
+    setFormStatus(message, favoriteError ? 'err' : 'ok');
     renderRoom();
+    renderFavorites();
     renderGroupOrders();
     elements.search.focus();
   } catch (error) {
     setFormStatus(error.message, 'err');
+    if (error.code === 'deadline_passed') refreshSession(false);
   } finally {
     elements.submit.disabled = false;
   }
@@ -544,7 +870,7 @@ async function refreshSession(showError) {
   elements.refreshOrders.textContent = 'Refreshing…';
   try {
     const data = await request(apiBase);
-    session = data.session;
+    setSession(data.session);
     renderRoom();
     renderGroupOrders();
   } catch (error) {
@@ -568,43 +894,59 @@ function showFatal(message) {
 }
 
 elements.search.addEventListener('input', renderDrinkList);
-elements.changeDrink.addEventListener('click', () => {
-  selectedItem = null;
-  selections = {};
-  elements.editor.classList.add('hidden');
-  elements.picker.classList.remove('hidden');
-  setFormStatus('', '');
+elements.surpriseMe.addEventListener('click', surpriseMe);
+elements.rerollDrink.addEventListener('click', surpriseMe);
+elements.editDrink.addEventListener('click', () => {
+  const firstModifier = elements.modifiers.querySelector('select, input:not(:disabled)');
+  const firstEditableControl = firstModifier || elements.quantity;
+  firstEditableControl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  firstEditableControl.focus();
+});
+elements.removeDrink.addEventListener('click', () => {
+  resetEditor();
   elements.search.focus();
 });
 elements.cancelEdit.addEventListener('click', resetEditor);
 elements.quantity.addEventListener('input', updateEstimate);
+elements.saveFavorite.addEventListener('change', () => {
+  if (elements.saveFavorite.checked && !elements.favoriteName.value.trim() && selectedItem) {
+    elements.favoriteName.value = selectedItem.name;
+  }
+  updateFavoriteSaveControls();
+  if (elements.saveFavorite.checked) elements.favoriteName.focus();
+});
 elements.form.addEventListener('submit', submitOrder);
 elements.refreshOrders.addEventListener('click', () => refreshSession(true));
 
 request(apiBase)
   .then(async (roomData) => {
+    // Capture the server clock as soon as this response arrives; loading the
+    // menu afterward should not make the countdown drift late.
+    setSession(roomData.session);
     const restaurantId = roomData.session.restaurant_id;
     const menuData = await request(
       `/api/menu?restaurant_id=${encodeURIComponent(restaurantId)}`);
     if (menuData.menu.restaurant_id !== restaurantId) {
       throw new Error('The selected store menu could not be verified.');
     }
-    return [roomData, menuData];
+    return menuData;
   })
-  .then(([roomData, menuData]) => {
-    session = roomData.session;
+  .then((menuData) => {
     menu = menuData.menu;
     if (!menu || !menu.items || !menu.items.length) {
       throw new Error('The store menu is unavailable right now.');
     }
-    const savedName = readStorage(nameKey, '');
+    const savedName = readStorage(participantNameKey, '') || readStorage(nameKey, '');
     if (typeof savedName === 'string') elements.person.value = savedName;
     renderRoom();
     renderCategories();
     renderDrinkList();
+    renderFavorites();
     renderGroupOrders();
     window.setInterval(() => {
       if (!document.hidden) refreshSession(false);
     }, 15000);
   })
   .catch((error) => showFatal(error.message));
+
+window.setInterval(tickDeadline, 1000);

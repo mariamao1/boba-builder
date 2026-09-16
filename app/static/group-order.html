@@ -26,6 +26,14 @@
     <span>Loading group order…</span>
   </section>
 
+  <section class="deadline-card" id="deadline-card" aria-labelledby="deadline-countdown">
+    <div>
+      <p class="step-label">Order deadline</p>
+      <strong id="deadline-countdown">Loading countdown…</strong>
+    </div>
+    <p id="deadline-detail">Checking the organizer’s cutoff time.</p>
+  </section>
+
   <section class="card order-card" id="order-card">
     <form id="order-form" novalidate>
       <div class="form-heading">
@@ -42,10 +50,29 @@
                autocomplete="name" placeholder="What should the organizer call you?" required>
       </label>
 
+      <section class="favorites-panel hidden" id="favorites-panel" aria-labelledby="favorites-title">
+        <div class="favorites-heading">
+          <div>
+            <p class="step-label">Saved in this browser</p>
+            <h3 id="favorites-title">My usuals</h3>
+          </div>
+          <span class="muted" id="favorites-count"></span>
+        </div>
+        <div class="favorites-list" id="favorites-list"></div>
+        <div class="favorite-status" id="favorite-status" role="status" aria-live="polite"></div>
+      </section>
+
       <div id="drink-picker">
         <div class="picker-heading">
           <label for="drink-search">Pick a drink</label>
           <span id="menu-count" class="muted"></span>
+        </div>
+        <div class="surprise-panel">
+          <button class="btn surprise-button" id="surprise-me" type="button"
+                  aria-describedby="surprise-hint" disabled>
+            <span aria-hidden="true">✨</span> Surprise Me
+          </button>
+          <p class="muted" id="surprise-hint">Picking an orderable drink and options…</p>
         </div>
         <input id="drink-search" class="menu-search" type="search"
                autocomplete="off" placeholder="Search the menu" aria-controls="drink-list">
@@ -56,14 +83,20 @@
 
       <div id="drink-editor" class="hidden">
         <article class="selected-drink">
+          <button class="selected-remove" id="remove-drink" type="button"
+                  aria-label="Remove selected drink">×</button>
           <div>
             <p class="selected-kicker">Selected drink</p>
             <h3 id="selected-name"></h3>
             <p id="selected-description" class="muted selected-description"></p>
+            <p id="selected-options" class="selected-options"></p>
           </div>
           <div class="selected-side">
             <strong id="selected-price"></strong>
-            <button class="text-button" id="change-drink" type="button">Change</button>
+            <div class="selected-actions">
+              <button class="text-button" id="reroll-drink" type="button">Surprise me again</button>
+              <button class="text-button" id="edit-drink" type="button">Edit</button>
+            </div>
           </div>
         </article>
 
@@ -79,6 +112,21 @@
             <span>Notes <small>(optional)</small></span>
             <textarea id="notes" name="notes" rows="2" maxlength="500"
                       placeholder="Anything the organizer should know?"></textarea>
+          </label>
+        </div>
+
+        <div class="favorite-save" id="favorite-save">
+          <label class="favorite-toggle" for="save-favorite">
+            <input id="save-favorite" type="checkbox">
+            <span>
+              <strong id="favorite-toggle-title">Save as a usual</strong>
+              <small id="favorite-toggle-help">Keep this drink and every option in this browser.</small>
+            </span>
+          </label>
+          <label class="participant-field favorite-name-field hidden" id="favorite-name-field" for="favorite-name">
+            <span>Usual name</span>
+            <input id="favorite-name" type="text" maxlength="50"
+                   placeholder="My usual">
           </label>
         </div>
 
@@ -113,6 +161,8 @@
   <p class="footnote participant-footnote">Edit controls appear only for drinks added in this browser. Nothing is ordered or paid for here.</p>
 </main>
 
+<script src="/static/favorites.js"></script>
+<script src="/static/randomizer.js"></script>
 <script src="/static/group-order.js"></script>
 </body>
 </html>

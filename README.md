@@ -51,6 +51,17 @@ Python 3.11+, standard library only — nothing to install.
 - [x] **Task 13** — live per-person estimates, proportional shared-cost splitting,
       final receipt totals, and shareable payment breakdowns
       (`docs/task13-payment-splitting.md`)
+- [x] **Task 14** — organizer-set deadlines, live participant/organizer countdowns,
+      automatic locking, and deadline extensions (`docs/task14-order-deadline.md`)
+- [x] **Task 15** — browser-local named favorite drinks with current-menu
+      validation and one-tap group-order entry (`docs/task15-favorites.md`)
+- [x] **Task 16** — category-aware Surprise Me drafts with valid, editable
+      menu options (`docs/task16-randomizer.md`)
+- [x] **Task 17** — local QR-code invites with compact, full-screen, and
+      downloadable organizer views (`docs/task17-qr-code.md`)
+- [x] **Task 18** — per-cup pickup labels with full drink specs, on-screen
+      checklist, printable slips, and copyable text
+      (`docs/task18-drink-labels.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.

@@ -20,10 +20,33 @@ const elements = {
   roomSubtitle: document.getElementById('room-subtitle'),
   roomStrip: document.getElementById('room-strip'),
   copyLink: document.getElementById('copy-link'),
+  showQr: document.getElementById('show-qr'),
+  downloadQr: document.getElementById('download-qr'),
+  downloadQrDialog: document.getElementById('download-qr-dialog'),
+  openQr: document.getElementById('open-qr'),
+  closeQr: document.getElementById('close-qr'),
+  closeQrButton: document.getElementById('close-qr-button'),
+  qrDialog: document.getElementById('qr-dialog'),
+  qrPreview: document.getElementById('qr-preview'),
+  qrLarge: document.getElementById('qr-large'),
+  qrCompactContext: document.getElementById('qr-compact-context'),
+  qrDialogTitle: document.getElementById('qr-dialog-title'),
+  qrDialogStore: document.getElementById('qr-dialog-store'),
+  qrDialogDeadline: document.getElementById('qr-dialog-deadline'),
+  qrDialogUrl: document.getElementById('qr-dialog-url'),
+  qrStatus: document.getElementById('qr-status'),
   openParticipant: document.getElementById('open-participant'),
   refresh: document.getElementById('refresh'),
   toggleLock: document.getElementById('toggle-lock'),
   forgetAccess: document.getElementById('forget-access'),
+  deadlineManager: document.getElementById('deadline-manager'),
+  deadlineCountdown: document.getElementById('deadline-countdown'),
+  deadlineDetail: document.getElementById('deadline-detail'),
+  deadlineForm: document.getElementById('deadline-form'),
+  deadlineInput: document.getElementById('deadline-input'),
+  saveDeadline: document.getElementById('save-deadline'),
+  deadlineStatus: document.getElementById('deadline-status'),
+  deadlineQuickActions: document.querySelectorAll('[data-extend-minutes]'),
   drinkCount: document.getElementById('drink-count'),
   peopleCount: document.getElementById('people-count'),
   lineCount: document.getElementById('line-count'),
@@ -45,6 +68,9 @@ const elements = {
 let organizerToken = readToken();
 let session = null;
 let refreshing = false;
+let serverOffsetMs = 0;
+let deadlineTransitionHandled = false;
+let renderedQrUrl = '';
 
 function readToken() {
   try {
@@ -133,8 +159,267 @@ function timeText(timestamp) {
   return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
 }
 
+function deadlineText(timestamp) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  }).format(date);
+}
+
+function setSession(updated) {
+  session = updated;
+  const serverTime = new Date(updated.server_now).getTime();
+  if (Number.isFinite(serverTime)) serverOffsetMs = serverTime - Date.now();
+  deadlineTransitionHandled = !updated.accepting_orders;
+}
+
+function deadlineRemaining() {
+  if (!session) return 0;
+  const deadline = new Date(session.deadline_at || session.expires_at).getTime();
+  return Number.isFinite(deadline) ? deadline - (Date.now() + serverOffsetMs) : 0;
+}
+
+function countdownText(milliseconds) {
+  const total = Math.max(0, Math.ceil(milliseconds / 1000));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (days) return `${days}d ${hours}h ${minutes}m left`;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s left`;
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s left`;
+}
+
+function localDateTimeValue(value) {
+  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function renderDeadline(syncInput) {
+  if (!session) return;
+  const timestamp = session.deadline_at || session.expires_at;
+  const exact = deadlineText(timestamp);
+  const passed = session.deadline_passed || deadlineRemaining() <= 0;
+  const closed = session.status === 'closed';
+  elements.deadlineManager.classList.toggle('deadline-passed', passed || closed);
+  if (closed) {
+    elements.deadlineCountdown.textContent = 'Order closed';
+    elements.deadlineDetail.textContent = exact ? `The cutoff was ${exact}.` : 'The room is read-only.';
+  } else if (passed) {
+    elements.deadlineCountdown.textContent = 'Deadline passed';
+    elements.deadlineDetail.textContent = `Submissions locked automatically at ${exact}. Set a future time to reopen.`;
+  } else if (session.status === 'locked') {
+    elements.deadlineCountdown.textContent = 'Paused manually';
+    elements.deadlineDetail.textContent = `${countdownText(deadlineRemaining())} · cutoff ${exact}`;
+  } else {
+    elements.deadlineCountdown.textContent = countdownText(deadlineRemaining());
+    elements.deadlineDetail.textContent = `Submissions lock automatically at ${exact}.`;
+  }
+
+  const now = new Date(Date.now() + serverOffsetMs);
+  elements.deadlineInput.min = localDateTimeValue(new Date(now.getTime() + 60 * 1000));
+  elements.deadlineInput.max = localDateTimeValue(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
+  if (syncInput && document.activeElement !== elements.deadlineInput) {
+    elements.deadlineInput.value = localDateTimeValue(new Date(timestamp));
+  }
+  elements.deadlineInput.disabled = closed;
+  elements.saveDeadline.disabled = closed;
+  elements.deadlineQuickActions.forEach((button) => { button.disabled = closed; });
+}
+
+function tickDeadline() {
+  if (!session) return;
+  renderDeadline(false);
+  if (session.accepting_orders && deadlineRemaining() <= 0 && !deadlineTransitionHandled) {
+    deadlineTransitionHandled = true;
+    session.accepting_orders = false;
+    session.deadline_passed = true;
+    session.status = 'locked';
+    session.lock_reason = 'deadline';
+    render();
+    refreshSession();
+  }
+}
+
 function participantUrl() {
   return `${window.location.origin}/group-order/${encodeURIComponent(roomId)}`;
+}
+
+function qrDeadlineText() {
+  if (!session) return 'Scan with your phone camera';
+  const exact = deadlineText(session.deadline_at || session.expires_at);
+  if (session.status === 'closed') return exact ? `Order closed · cutoff was ${exact}` : 'Order closed';
+  if (session.deadline_passed) return exact ? `Deadline passed · ${exact}` : 'Deadline passed';
+  return exact ? `Order by ${exact}` : 'Scan with your phone camera';
+}
+
+function renderQrCode(container, size) {
+  const holder = document.createElement('div');
+  const code = new QRCode(holder, {
+    text: participantUrl(),
+    width: 64,
+    height: 64,
+    colorDark: '#000000',
+    colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M,
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  drawQrMatrix(canvas.getContext('2d'), code._oQRCode, 0, 0, size);
+  container.textContent = '';
+  container.append(canvas);
+  container.removeAttribute('title');
+  return code;
+}
+
+function renderInvite() {
+  if (!session) return;
+  const url = participantUrl();
+  const detail = [session.store_name, qrDeadlineText()].filter(Boolean).join(' · ');
+  elements.qrCompactContext.textContent = detail;
+  elements.qrDialogTitle.textContent = session.title || 'Group order';
+  elements.qrDialogStore.textContent = session.store_name || 'Boba Builder group order';
+  elements.qrDialogDeadline.textContent = qrDeadlineText();
+  elements.qrDialogUrl.textContent = url;
+  if (renderedQrUrl === url && elements.qrPreview.firstChild && elements.qrLarge.firstChild) return;
+  try {
+    if (typeof QRCode !== 'function') throw new Error('QR generator unavailable');
+    renderQrCode(elements.qrPreview, 192);
+    renderQrCode(elements.qrLarge, 720);
+    renderedQrUrl = url;
+    elements.openQr.disabled = false;
+    elements.showQr.disabled = false;
+    elements.downloadQr.disabled = false;
+    elements.downloadQrDialog.disabled = false;
+    setStatus(elements.qrStatus, '', '');
+  } catch (_error) {
+    elements.qrPreview.textContent = 'QR unavailable';
+    elements.qrLarge.textContent = 'The QR code could not be generated. Use the participant link instead.';
+    elements.openQr.disabled = true;
+    elements.showQr.disabled = true;
+    elements.downloadQr.disabled = true;
+    elements.downloadQrDialog.disabled = true;
+    setStatus(elements.qrStatus, 'QR unavailable. Copy the participant link instead.', 'err');
+  }
+}
+
+function showQrDialog() {
+  renderInvite();
+  if (typeof elements.qrDialog.showModal === 'function') elements.qrDialog.showModal();
+  else elements.qrDialog.setAttribute('open', '');
+}
+
+function closeQrDialog() {
+  if (typeof elements.qrDialog.close === 'function') elements.qrDialog.close();
+  else elements.qrDialog.removeAttribute('open');
+}
+
+function drawQrMatrix(context, model, left, top, availableSize) {
+  const quietModules = 4;
+  const count = model.getModuleCount();
+  const moduleSize = Math.floor(availableSize / (count + quietModules * 2));
+  const size = moduleSize * (count + quietModules * 2);
+  const x = left + Math.floor((availableSize - size) / 2);
+  const y = top + Math.floor((availableSize - size) / 2);
+  context.fillStyle = '#ffffff';
+  context.fillRect(x, y, size, size);
+  context.fillStyle = '#000000';
+  for (let row = 0; row < count; row += 1) {
+    for (let column = 0; column < count; column += 1) {
+      if (model.isDark(row, column)) {
+        context.fillRect(
+          x + (column + quietModules) * moduleSize,
+          y + (row + quietModules) * moduleSize,
+          moduleSize,
+          moduleSize,
+        );
+      }
+    }
+  }
+}
+
+function centeredLines(context, value, centerX, startY, maxWidth, lineHeight, maxLines) {
+  const words = String(value || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  words.forEach((word) => {
+    const current = lines[lines.length - 1] || '';
+    const candidate = current ? `${current} ${word}` : word;
+    if (current && context.measureText(candidate).width > maxWidth && lines.length < maxLines) {
+      lines.push(word);
+    } else if (!lines.length) {
+      lines.push(word);
+    } else {
+      lines[lines.length - 1] = candidate;
+    }
+  });
+  lines.slice(0, maxLines).forEach((line, index) => {
+    context.fillText(line, centerX, startY + index * lineHeight, maxWidth);
+  });
+  return startY + Math.min(lines.length, maxLines) * lineHeight;
+}
+
+function qrDownloadCanvas() {
+  const holder = document.createElement('div');
+  const code = renderQrCode(holder, 64);
+  const canvas = document.createElement('canvas');
+  canvas.width = 1200;
+  canvas.height = 1500;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#faf6f1';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.textAlign = 'center';
+  context.textBaseline = 'top';
+  context.fillStyle = '#7a4a28';
+  context.font = '700 34px system-ui, sans-serif';
+  context.fillText('SCAN TO JOIN THE GROUP ORDER', 600, 62);
+  context.fillStyle = '#2c211b';
+  context.font = '700 68px system-ui, sans-serif';
+  const titleBottom = centeredLines(context, session.title || 'Group order', 600, 125, 1020, 76, 2);
+  context.fillStyle = '#7b6a5e';
+  context.font = '400 31px system-ui, sans-serif';
+  context.fillText(session.store_name || 'Boba Builder', 600, Math.max(285, titleBottom + 15), 1020);
+  drawQrMatrix(context, code._oQRCode, 140, 350, 920);
+  context.fillStyle = '#2c211b';
+  context.font = '700 34px system-ui, sans-serif';
+  context.fillText(qrDeadlineText(), 600, 1290, 1040);
+  context.fillStyle = '#7b6a5e';
+  context.font = '400 24px system-ui, sans-serif';
+  context.fillText(participantUrl(), 600, 1370, 1080);
+  return canvas;
+}
+
+function qrFilename() {
+  const base = String((session && session.title) || 'group-order')
+    .normalize('NFKD').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
+  return `${base || 'group-order'}-qr.png`;
+}
+
+function downloadQrCode() {
+  try {
+    const canvas = qrDownloadCanvas();
+    const save = (href, revoke) => {
+      const link = document.createElement('a');
+      link.download = qrFilename();
+      link.href = href;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      if (revoke) window.setTimeout(() => URL.revokeObjectURL(href), 1000);
+      setStatus(elements.qrStatus, 'QR code downloaded.', 'ok');
+    };
+    if (typeof canvas.toBlob === 'function') {
+      canvas.toBlob((blob) => {
+        if (blob) save(URL.createObjectURL(blob), true);
+        else save(canvas.toDataURL('image/png'), false);
+      }, 'image/png');
+    } else {
+      save(canvas.toDataURL('image/png'), false);
+    }
+  } catch (_error) {
+    setStatus(elements.qrStatus, 'Couldn’t download the QR code. Try showing it full screen.', 'err');
+  }
 }
 
 function canModerate() {
@@ -152,7 +437,9 @@ function renderRoom() {
 
   const labels = {
     open: ['Open for drinks', 'Participants can add and edit orders.'],
-    locked: ['Submissions paused', 'Only you can remove lines while reviewing.'],
+    locked: session.lock_reason === 'deadline'
+      ? ['Deadline reached', 'New submissions were automatically locked.']
+      : ['Submissions paused', 'Only you can remove lines while reviewing.'],
     closed: session.preview_url
       ? ['Order finalized', 'Submissions are permanently closed.']
       : ['Submissions closed', 'The saved drinks are ready to send to cart review.'],
@@ -169,7 +456,8 @@ function renderRoom() {
   elements.drinkCount.textContent = String(session.summary.drinks);
   elements.peopleCount.textContent = String(session.summary.people);
   elements.lineCount.textContent = String(session.summary.orders);
-  elements.toggleLock.hidden = !['open', 'locked'].includes(session.status);
+  elements.toggleLock.hidden = !(session.status === 'open'
+    || (session.status === 'locked' && session.lock_reason !== 'deadline'));
   elements.toggleLock.textContent = session.status === 'open' ? 'Pause submissions' : 'Reopen submissions';
   elements.moderationNote.textContent = canModerate()
     ? 'Remove junk or duplicate lines before finalizing.'
@@ -186,6 +474,7 @@ function renderRoom() {
       ? 'This room is closed. Push its saved drinks into the cart review when ready.'
       : 'Finalizing closes submissions permanently and opens the existing cart review.';
   }
+  renderInvite();
 }
 
 function renderOrders() {
@@ -312,6 +601,7 @@ function renderDrinkTotals() {
 
 function render() {
   renderRoom();
+  renderDeadline(true);
   renderOrders();
   renderDrinkTotals();
   renderCosts();
@@ -322,7 +612,7 @@ function applyPublicSession(updated) {
     finalized_at: session.finalized_at,
     preview_url: session.preview_url,
   };
-  session = { ...updated, ...(privateState || {}) };
+  setSession({ ...updated, ...(privateState || {}) });
   render();
 }
 
@@ -351,7 +641,7 @@ async function refreshSession(options) {
   if (announce) elements.refresh.disabled = true;
   try {
     const data = await request(`${apiBase}/organizer`);
-    session = data.session;
+    setSession(data.session);
     showDashboard();
     render();
     showLive('', session.status === 'open' ? 'Live' : 'Monitoring', `Updated ${timeText(new Date())}`);
@@ -386,6 +676,46 @@ async function changeStatus() {
   } finally {
     elements.toggleLock.disabled = false;
   }
+}
+
+async function updateDeadline(value) {
+  const deadline = value instanceof Date ? value : new Date(value);
+  const serverNow = Date.now() + serverOffsetMs;
+  if (Number.isNaN(deadline.getTime()) || deadline.getTime() <= serverNow) {
+    setStatus(elements.deadlineStatus, 'Choose a future deadline.', 'err');
+    elements.deadlineInput.focus();
+    return;
+  }
+  const wasPassed = Boolean(session && session.deadline_passed);
+  elements.saveDeadline.disabled = true;
+  elements.deadlineQuickActions.forEach((button) => { button.disabled = true; });
+  setStatus(elements.deadlineStatus, 'Saving deadline…', 'busy');
+  try {
+    const data = await request(`${apiBase}/deadline`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deadline_at: deadline.toISOString() }),
+    });
+    applyPublicSession(data.session);
+    const message = wasPassed && data.session.accepting_orders
+      ? 'Deadline extended. Participants can submit again.'
+      : data.session.status === 'locked'
+        ? 'Deadline saved. Submissions remain manually paused.'
+        : 'Deadline updated.';
+    setStatus(elements.deadlineStatus, message, 'ok');
+  } catch (error) {
+    setStatus(elements.deadlineStatus, error.message, 'err');
+  } finally {
+    renderDeadline(false);
+  }
+}
+
+function extendDeadline(minutes) {
+  if (!session || session.status === 'closed') return;
+  const now = Date.now() + serverOffsetMs;
+  const currentDeadline = new Date(session.deadline_at || session.expires_at).getTime();
+  const base = Number.isFinite(currentDeadline) && currentDeadline > now ? currentDeadline : now;
+  updateDeadline(new Date(base + minutes * 60 * 1000));
 }
 
 async function removeOrder(order, button) {
@@ -439,6 +769,12 @@ elements.copyLink.addEventListener('click', async () => {
     window.prompt('Copy this participant link:', url);
   }
 });
+elements.openQr.addEventListener('click', showQrDialog);
+elements.showQr.addEventListener('click', showQrDialog);
+elements.closeQr.addEventListener('click', closeQrDialog);
+elements.closeQrButton.addEventListener('click', closeQrDialog);
+elements.downloadQr.addEventListener('click', downloadQrCode);
+elements.downloadQrDialog.addEventListener('click', downloadQrCode);
 elements.copyCosts.addEventListener('click', async () => {
   const text = costShareText();
   if (!text) return;
@@ -452,11 +788,19 @@ elements.copyCosts.addEventListener('click', async () => {
 });
 elements.refresh.addEventListener('click', () => refreshSession({ announce: true }));
 elements.toggleLock.addEventListener('click', changeStatus);
+elements.deadlineForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  updateDeadline(elements.deadlineInput.value);
+});
+elements.deadlineQuickActions.forEach((button) => {
+  button.addEventListener('click', () => extendDeadline(Number(button.dataset.extendMinutes)));
+});
 elements.finalize.addEventListener('click', finalizeOrder);
 elements.continuePreview.addEventListener('click', () => {
   if (session && session.preview_url) window.location.assign(session.preview_url);
 });
 elements.forgetAccess.addEventListener('click', () => {
+  closeQrDialog();
   saveToken('');
   session = null;
   showAccess('Organizer access was removed from this browser.');
@@ -470,3 +814,4 @@ takeTokenFromFragment();
 if (organizerToken) refreshSession({ announce: true });
 else showAccess();
 window.setInterval(() => refreshSession(), POLL_INTERVAL_MS);
+window.setInterval(tickDeadline, 1000);

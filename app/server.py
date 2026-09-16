@@ -14,6 +14,7 @@ Routes
     GET  /template.csv           the order template, filled with real menu items
     POST /api/import             file upload or {"sheet_url": ...} -> run_id
     GET  /api/runs/<run_id>      the parsed order, matched to the menu, as JSON
+    GET  /api/runs/<run_id>/labels  one pickup label per placed cup, as JSON
     GET  /api/drinks?q=          type-ahead search over the store's menu
     GET  /api/stores             captured stores available for group orders
     GET  /api/menu               participant menu with per-drink option groups
@@ -26,12 +27,14 @@ Routes
     GET/POST /api/saved-orders   list or save completed cart snapshots
     GET  /api/saved-orders/<id>  retrieve one browser-owned snapshot
     GET  .../<id>/export         export its normalized rows as CSV
+    GET  .../<id>/labels         one pickup label per placed cup, as JSON
     POST .../<id>/repeat         make a fresh editable run from its rows
     POST /api/group-orders            create an anonymous shared order room
     GET  /api/group-orders/<room_id>  retrieve its aggregated orders
     GET  .../<room_id>/organizer      authenticated organizer room state
     POST /api/group-orders/<room_id>/orders  add an order while the room is open
     PATCH/DELETE .../orders/<order_id>       manage an order with its edit token
+    PATCH .../<room_id>/deadline             organizer changes the cutoff time
     POST .../<lock|reopen|close|finalize>     organizer lifecycle controls
     GET  /api/health
 
@@ -52,7 +55,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import group_orders, importer, menu, options, pipeline, runs, saved_orders, sheets, template
+from . import group_orders, importer, labels, menu, options, pipeline, runs, saved_orders, sheets, template
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = importer.MAX_UPLOAD_BYTES + 512 * 1024  # payload plus multipart framing
@@ -266,6 +269,9 @@ class Handler(BaseHTTPRequestHandler):
         match = re.fullmatch(r"/api/runs/([0-9a-f]+)", path)
         if match:
             return self._get_run(match.group(1))
+        match = re.fullmatch(r"/api/runs/([0-9a-f]+)/labels", path)
+        if match:
+            return self._get_run_labels(match.group(1))
 
         if path == "/api/saved-orders":
             try:
@@ -278,6 +284,10 @@ class Handler(BaseHTTPRequestHandler):
             rf"/api/saved-orders/({SAVED_ORDER_ID_PATTERN})/export", path)
         if match:
             return self._export_saved_order(match.group(1))
+        match = re.fullmatch(
+            rf"/api/saved-orders/({SAVED_ORDER_ID_PATTERN})/labels", path)
+        if match:
+            return self._saved_order_labels(match.group(1))
         match = re.fullmatch(rf"/api/saved-orders/({SAVED_ORDER_ID_PATTERN})", path)
         if match:
             try:
@@ -316,6 +326,50 @@ class Handler(BaseHTTPRequestHandler):
         # behind a correction. Only read-only stages run here (pipeline.enrich).
         return self._json({"ok": True, "run": pipeline.enrich(run),
                            "stages": pipeline.status()})
+
+    def _run_title(self, run: dict) -> str:
+        source = run.get("source") or {}
+        return (source.get("title") or source.get("label")
+                or (str(source.get("filename") or "").rsplit(".", 1)[0] or None)
+                or "Boba pickup")
+
+    def _get_run_labels(self, run_id: str):
+        if not RUN_ID_RE.fullmatch(run_id):
+            return self._error("bad run id", HTTPStatus.BAD_REQUEST)
+        run = runs.load(run_id)
+        if run is None:
+            return self._error("that saved order has expired — start again",
+                               HTTPStatus.NOT_FOUND)
+        cart = run.get("cart") or {}
+        if not cart.get("review_ready"):
+            return self._error("build a reviewable cart before printing pickup labels",
+                               HTTPStatus.CONFLICT)
+        title = self._run_title(run)
+        made = labels.build_labels(cart.get("added") or [])
+        counts = cart.get("counts") or {}
+        return self._json({
+            "ok": True,
+            "title": title,
+            "labels": made,
+            "text": labels.format_text(made, title),
+            "cups": len(made),
+            "unplaced": int(counts.get("not_added_drinks") or 0),
+        }, extra={"Cache-Control": "no-store"})
+
+    def _saved_order_labels(self, order_id: str):
+        try:
+            order = saved_orders.get(order_id, self._saved_orders_token())
+        except saved_orders.SavedOrderError as exc:
+            return self._saved_order_error(exc)
+        made = labels.build_labels(order.get("items") or [])
+        return self._json({
+            "ok": True,
+            "title": order.get("label") or "Boba pickup",
+            "labels": made,
+            "text": labels.format_text(made, order.get("label") or "Boba pickup"),
+            "cups": len(made),
+            "unplaced": int((order.get("counts") or {}).get("not_placed_drinks") or 0),
+        }, extra={"Cache-Control": "no-store"})
 
     def _get_group_order(self, room_id: str):
         try:
@@ -425,6 +479,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self):
         path = unquote(urlparse(self.path).path)
+        deadline_match = re.fullmatch(
+            rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/deadline", path)
+        if deadline_match:
+            try:
+                payload = self._read_json()
+                room = group_orders.update_deadline(
+                    deadline_match.group(1), payload.get("deadline_at"),
+                    self._organizer_token(payload),
+                )
+            except group_orders.GroupOrderError as exc:
+                return self._group_error(exc)
+            except ValueError as exc:
+                return self._error(str(exc))
+            return self._json({"ok": True, "session": room},
+                              extra={"Cache-Control": "no-store"})
         match = re.fullmatch(
             rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/orders/({GROUP_ORDER_LINE_ID_PATTERN})",
             path,
@@ -473,6 +542,7 @@ class Handler(BaseHTTPRequestHandler):
                 title=payload.get("title", ""),
                 organizer_name=payload.get("organizer_name", ""),
                 restaurant_id=restaurant_id,
+                deadline_at=payload.get("deadline_at"),
                 expires_in_hours=payload.get(
                     "expires_in_hours", group_orders.DEFAULT_TTL_HOURS),
             )
