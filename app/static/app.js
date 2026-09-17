@@ -279,8 +279,30 @@ function renderDeadlineChoice() {
   $('deadline-preview').textContent = formatted ? `Closes ${formatted}` : 'Choose a future date and time.';
 }
 
+function renderBudgetChoice() {
+  const input = $('group-budget');
+  const value = input.value.trim();
+  const amount = value === '' ? null : Number(value);
+  if (amount === null) {
+    $('group-budget-preview').textContent = 'No spending cap';
+  } else if (!Number.isFinite(amount) || amount < 0.01 || amount > 1000) {
+    $('group-budget-preview').textContent = 'Enter an amount from $0.01 to $1,000.00';
+  } else {
+    $('group-budget-preview').textContent = `$${amount.toFixed(2)} hard cap per person`;
+  }
+}
+
 $('group-deadline-preset').addEventListener('change', renderDeadlineChoice);
 $('group-deadline').addEventListener('input', renderDeadlineChoice);
+$('group-budget').addEventListener('input', renderBudgetChoice);
+$('group-budget').addEventListener('blur', () => {
+  const amount = Number($('group-budget').value);
+  if ($('group-budget').value.trim() && Number.isFinite(amount)
+      && amount >= 0.01 && amount <= 1000) {
+    $('group-budget').value = amount.toFixed(2);
+  }
+  renderBudgetChoice();
+});
 
 $('group-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -299,10 +321,19 @@ $('group-form').addEventListener('submit', async (event) => {
       ? $('group-deadline') : $('group-deadline-preset')).focus();
     return;
   }
+  const budgetValue = $('group-budget').value.trim();
+  const budgetCap = budgetValue === '' ? null : Number(budgetValue);
+  if (budgetCap !== null && (!Number.isFinite(budgetCap) || budgetCap < 0.01 || budgetCap > 1000)) {
+    writeStatus(groupStatusBox, 'err', 'Choose a per-person budget from $0.01 to $1,000.00.',
+      ' Leave it blank if this order has no spending limit.');
+    $('group-budget').focus();
+    return;
+  }
   const payload = {
     restaurant_id: $('group-store').value,
     organizer_name: $('organizer-name').value.trim(),
     title: $('group-title').value.trim(),
+    budget_cap: budgetCap,
     deadline_at: deadline.toISOString(),
   };
   writeStatus(groupStatusBox, 'busy', 'Creating your group link…', '');
@@ -432,6 +463,7 @@ fetch('/api/menu-hints').then((response) => response.json()).then((hints) => {
 const requestedPath = new URLSearchParams(window.location.search).get('method');
 if (requestedPath === 'group' || requestedPath === 'sheet') selectPath(requestedPath);
 initializeDeadline();
+renderBudgetChoice();
 window.setInterval(renderDeadlineChoice, 60000);
 
 fetch('/api/stores').then(async (response) => {

@@ -20,6 +20,7 @@ import math
 import os
 import secrets
 import threading
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from . import costs, importer, matcher, menu, runs
@@ -35,6 +36,7 @@ RETENTION_DAYS = 7
 KEEP_SESSIONS = 200
 MAX_ORDERS = 200
 MAX_QUANTITY = 20
+MAX_BUDGET_CAP = 1000
 
 ORDER_FIELDS = (
     "drink", "size", "sugar", "ice", "toppings", "milk", "temperature",
@@ -103,6 +105,11 @@ class RoomFull(RoomNotOpen):
 
 class EmptyRoom(RoomNotOpen):
     code = "empty_room"
+
+
+class BudgetExceeded(GroupOrderError):
+    status = 409
+    code = "budget_exceeded"
 
 
 def _utcnow() -> dt.datetime:
@@ -267,6 +274,28 @@ def _clean_quantity(value) -> int:
     return quantity
 
 
+def _clean_budget_cap(value) -> float | None:
+    """Return an optional positive, cent-rounded per-person limit."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise GroupOrderError("budget cap must be a dollar amount")
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise GroupOrderError("budget cap must be a dollar amount") from exc
+    if not amount.is_finite() or amount <= 0 or amount > MAX_BUDGET_CAP:
+        raise GroupOrderError(
+            f"budget cap must be greater than $0 and at most ${MAX_BUDGET_CAP:,.2f}")
+    try:
+        amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise GroupOrderError("budget cap must be a dollar amount") from exc
+    if amount <= 0:
+        raise GroupOrderError("budget cap must be at least $0.01")
+    return float(amount)
+
+
 def _order_values(payload: dict, current: dict | None = None) -> dict:
     if not isinstance(payload, dict):
         raise GroupOrderError("order must be a JSON object")
@@ -336,6 +365,54 @@ def _price_orders(orders: list[dict], restaurant_id: str) -> tuple[list[dict], d
         return public, costs.breakdown(fallback)
 
 
+def _priced_person_totals(orders: list[dict], restaurant_id: str
+                          ) -> tuple[dict[str, int], dict[str, str]]:
+    """Return canonical captured-menu totals by case-insensitive person name."""
+    priced, _cost_summary = _price_orders(orders, restaurant_id)
+    totals: dict[str, int] = {}
+    names: dict[str, str] = {}
+    for order in priced:
+        cents = costs._cents(order.get("estimated_total"))
+        if cents is None:
+            # An unrecognized or temporarily unpriceable line cannot safely be
+            # compared to a dollar cap. It remains visible but is exempt.
+            continue
+        name = " ".join(str(order.get("person") or "").split())
+        key = name.casefold()
+        names.setdefault(key, name)
+        totals[key] = totals.get(key, 0) + cents
+    return totals, names
+
+
+def _enforce_budget(room: dict, candidate_orders: list[dict], *,
+                    previous_orders: list[dict] | None = None) -> None:
+    """Reject new spend above the room's combined per-person hard cap.
+
+    Existing lines are grandfathered when a cap is lowered. Participant edits
+    may keep or reduce that spend, but cannot make any over-cap person's priced
+    total grow. Organizer moderation deliberately bypasses this check.
+    """
+    cap = room.get("budget_cap")
+    if cap is None:
+        return
+    restaurant_id = room.get("restaurant_id") or menu.TARGET_STORE
+    candidate, names = _priced_person_totals(candidate_orders, restaurant_id)
+    previous = ({} if previous_orders is None else
+                _priced_person_totals(previous_orders, restaurant_id)[0])
+    cap_cents = costs._cents(cap)
+    if cap_cents is None:
+        return
+    for key, total in candidate.items():
+        if total <= cap_cents:
+            continue
+        if previous_orders is not None and total <= previous.get(key, 0):
+            continue
+        person = names.get(key) or "This person"
+        raise BudgetExceeded(
+            f"{person}'s drinks would total ${total / 100:.2f}, over the "
+            f"${cap_cents / 100:.2f} per-person limit")
+
+
 def _summary(orders: list[dict]) -> dict:
     people: dict[str, dict] = {}
     for order in orders:
@@ -370,6 +447,7 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
         "organizer_name": room["organizer_name"],
         "restaurant_id": restaurant_id,
         "store_name": room.get("store_name") or ((store or {}).get("name")),
+        "budget_cap": room.get("budget_cap"),
         "status": status,
         "accepting_orders": status == "open",
         "lock_reason": lock_reason,
@@ -390,6 +468,7 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
 
 def create(*, title: str = "", organizer_name: str = "",
            restaurant_id: str | None = None,
+           budget_cap=None,
            deadline_at: str | None = None,
            expires_in_hours: float = DEFAULT_TTL_HOURS,
            now: dt.datetime | None = None) -> tuple[dict, str]:
@@ -403,18 +482,21 @@ def create(*, title: str = "", organizer_name: str = "",
     store = menu.store_summary(restaurant_id)
     if store is None:
         raise GroupOrderError("choose an available Kung Fu Tea store")
+    budget_cap = _clean_budget_cap(budget_cap)
     deadline = _clean_deadline(deadline_at, expires_in_hours, current)
 
     room_id = secrets.token_urlsafe(18)
     organizer_token = secrets.token_urlsafe(32)
     created_at = _timestamp(current)
     room = {
-        "version": 3,
+        "version": 4,
         "id": room_id,
         "title": title,
         "organizer_name": organizer_name,
         "restaurant_id": restaurant_id,
         "store_name": store["name"],
+        "budget_cap": budget_cap,
+        "budget_updated_at": created_at,
         "status": "open",
         "created_at": created_at,
         "updated_at": created_at,
@@ -492,6 +574,7 @@ def add_order(room_id: str, payload: dict, *, now: dt.datetime | None = None
             "updated_at": _timestamp(current),
             "edit_token_hash": _secret_hash(edit_token),
         }
+        _enforce_budget(room, [*(room.get("orders") or []), order])
         room.setdefault("orders", []).append(order)
         room["updated_at"] = _timestamp(current)
         _write(room)
@@ -523,6 +606,16 @@ def update_order(room_id: str, order_id: str, payload: dict, *,
         if not _can_manage_order(room, order, order_token, organizer_token):
             raise Forbidden("the order edit token is missing or invalid")
         values = _order_values(payload, current=order)
+        organizer_can_manage = _matches_secret(
+            organizer_token, room.get("organizer_token_hash"))
+        if not organizer_can_manage:
+            existing_orders = room.get("orders") or []
+            candidate_orders = [
+                ({**saved, **values} if saved is order else saved)
+                for saved in existing_orders
+            ]
+            _enforce_budget(
+                room, candidate_orders, previous_orders=existing_orders)
         order.update(values)
         order["updated_at"] = _timestamp(current)
         room["updated_at"] = _timestamp(current)
@@ -590,6 +683,7 @@ def finalize(room_id: str, organizer_token: str | None, *,
             "title": room["title"],
             "restaurant_id": restaurant_id,
             "store": room.get("store_name") or (menu.store_summary(restaurant_id) or {}).get("name"),
+            "budget_cap": room.get("budget_cap"),
             "finalized_at": finalized_at,
         }
         run_id = runs.new_id()
@@ -649,6 +743,27 @@ def update_deadline(room_id: str, deadline_at, organizer_token: str | None, *,
         room["deadline_at"] = timestamp
         room["expires_at"] = timestamp
         room["deadline_updated_at"] = _timestamp(current)
+        room["updated_at"] = _timestamp(current)
+        _write(room)
+        return public_room(room, now=current)
+
+
+def set_budget_cap(room_id: str, budget_cap, organizer_token: str | None, *,
+                   now: dt.datetime | None = None) -> dict:
+    """Set or clear the combined per-person hard cap for future changes.
+
+    Lowering the cap never deletes submitted drinks. Those lines stay in the
+    room and can be reduced or edited without increasing their priced total.
+    """
+    current = _as_utc(now)
+    with _room_lock(room_id):
+        room = _read(room_id)
+        if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
+            raise Forbidden("the organizer token is missing or invalid")
+        if room.get("status") == "closed":
+            raise RoomNotOpen("a closed group order cannot change its budget cap")
+        room["budget_cap"] = _clean_budget_cap(budget_cap)
+        room["budget_updated_at"] = _timestamp(current)
         room["updated_at"] = _timestamp(current)
         _write(room)
         return public_room(room, now=current)

@@ -104,3 +104,14 @@ Store selection
   fetches and normalizes an uncached selected menu into `.menu-cache/`; bundled
   snapshots are offline fallbacks. A room cannot be created for an unknown id,
   and browser-supplied store names are never trusted.
+
+Per-person budgets
+------------------
+- The optional budget is a hard cap on one person's combined priced lines,
+  including quantities and priced modifiers. It is not a separate allowance
+  for every drink.
+- The room's captured menu is authoritative; browser-supplied prices are never
+  accepted. Lines that cannot be priced are shown but exempt from the cap.
+- Lowering a cap keeps existing lines. A participant may keep or reduce a
+  grandfathered total but cannot increase it; organizer moderation may still
+  override a line. Closed rooms cannot change the cap.

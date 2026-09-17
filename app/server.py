@@ -35,6 +35,7 @@ Routes
     POST /api/group-orders/<room_id>/orders  add an order while the room is open
     PATCH/DELETE .../orders/<order_id>       manage an order with its edit token
     PATCH .../<room_id>/deadline             organizer changes the cutoff time
+    PATCH .../<room_id>/budget               organizer sets the per-person cap
     POST .../<lock|reopen|close|finalize>     organizer lifecycle controls
     GET  /api/health
 
@@ -479,6 +480,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self):
         path = unquote(urlparse(self.path).path)
+        budget_match = re.fullmatch(
+            rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/budget", path)
+        if budget_match:
+            try:
+                payload = self._read_json()
+                if "budget_cap" not in payload:
+                    raise group_orders.GroupOrderError("budget_cap is required")
+                room = group_orders.set_budget_cap(
+                    budget_match.group(1), payload.get("budget_cap"),
+                    self._organizer_token(payload),
+                )
+            except group_orders.GroupOrderError as exc:
+                return self._group_error(exc)
+            except ValueError as exc:
+                return self._error(str(exc))
+            return self._json({"ok": True, "session": room},
+                              extra={"Cache-Control": "no-store"})
         deadline_match = re.fullmatch(
             rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/deadline", path)
         if deadline_match:
@@ -542,6 +560,7 @@ class Handler(BaseHTTPRequestHandler):
                 title=payload.get("title", ""),
                 organizer_name=payload.get("organizer_name", ""),
                 restaurant_id=restaurant_id,
+                budget_cap=payload.get("budget_cap"),
                 deadline_at=payload.get("deadline_at"),
                 expires_in_hours=payload.get(
                     "expires_in_hours", group_orders.DEFAULT_TTL_HOURS),

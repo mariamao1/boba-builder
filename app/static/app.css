@@ -147,16 +147,30 @@ main > .back-row.top-links:first-child { justify-content: flex-end; margin: 1rem
   margin-bottom: 1rem;
 }
 .group-form-grid .store-field { grid-column: 1 / -1; }
+.group-form-grid .budget-field,
 .group-form-grid .deadline-field {
   grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .55rem .8rem; padding: .85rem; border: 1px solid var(--line);
   border-radius: 12px; background: var(--bg-tint);
 }
-.deadline-field > label { margin: 0; }
-.deadline-field .store-help { grid-column: 1 / -1; margin: 0; }
+.budget-field > label, .deadline-field > label { margin: 0; }
+.budget-field .store-help, .deadline-field .store-help { grid-column: 1 / -1; margin: 0; }
 .deadline-preview {
   grid-column: 1 / -1; margin: .05rem 0 0; color: var(--brand);
   font-size: .88rem; font-weight: 650;
+}
+.budget-preview {
+  align-self: end; margin: 0 0 .7rem; color: var(--brand);
+  font-size: .88rem; font-weight: 650;
+}
+.group-currency-input {
+  display: flex; align-items: center; margin-top: .3rem; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--bg); color: var(--muted); padding-left: .75rem;
+}
+.group-currency-input:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.group-form-grid .group-currency-input input {
+  width: 100%; min-width: 0; margin: 0; border: 0; outline: 0; background: transparent;
+  padding-left: .35rem;
 }
 .custom-deadline[hidden] { display: none; }
 .group-form-grid input, .group-form-grid select { display: block; margin-top: .3rem; }
@@ -544,8 +558,10 @@ table.orders td .drink-input { min-width: 8rem; }
 @media (max-width: 520px) {
   .path-grid, .group-form-grid, .flow-heading { grid-template-columns: 1fr; }
   .path-card { min-height: 0; }
-  .group-form-grid .store-field, .group-form-grid .deadline-field { grid-column: auto; }
-  .group-form-grid .deadline-field { grid-template-columns: 1fr; }
+  .group-form-grid .store-field, .group-form-grid .budget-field,
+  .group-form-grid .deadline-field { grid-column: auto; }
+  .group-form-grid .budget-field, .group-form-grid .deadline-field { grid-template-columns: 1fr; }
+  .budget-preview { margin: 0; }
   .reconciliation-stats { grid-template-columns: 1fr; }
   .save-order-form { grid-template-columns: 1fr; }
 }

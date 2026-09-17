@@ -47,6 +47,14 @@ const elements = {
   saveDeadline: document.getElementById('save-deadline'),
   deadlineStatus: document.getElementById('deadline-status'),
   deadlineQuickActions: document.querySelectorAll('[data-extend-minutes]'),
+  budgetManager: document.getElementById('budget-manager'),
+  budgetCurrent: document.getElementById('budget-current'),
+  budgetDetail: document.getElementById('budget-detail'),
+  budgetForm: document.getElementById('budget-form'),
+  budgetInput: document.getElementById('budget-input'),
+  saveBudget: document.getElementById('save-budget'),
+  clearBudget: document.getElementById('clear-budget'),
+  budgetStatus: document.getElementById('budget-status'),
   drinkCount: document.getElementById('drink-count'),
   peopleCount: document.getElementById('people-count'),
   lineCount: document.getElementById('line-count'),
@@ -226,6 +234,50 @@ function renderDeadline(syncInput) {
   elements.deadlineInput.disabled = closed;
   elements.saveDeadline.disabled = closed;
   elements.deadlineQuickActions.forEach((button) => { button.disabled = closed; });
+}
+
+function estimatedTotalForPerson(person) {
+  const key = normalized(person);
+  return (session.orders || []).reduce((total, order) => {
+    if (normalized(order.person) !== key || order.estimated_total == null) return total;
+    return total + Number(order.estimated_total || 0);
+  }, 0);
+}
+
+function overBudgetPeople() {
+  const cap = Number(session && session.budget_cap);
+  if (!Number.isFinite(cap) || cap <= 0) return [];
+  const people = new Map();
+  (session.orders || []).forEach((order) => {
+    const key = normalized(order.person);
+    if (!people.has(key)) people.set(key, order.person);
+  });
+  return [...people.values()].filter(
+    (person) => estimatedTotalForPerson(person) > cap + 0.0001
+  );
+}
+
+function renderBudget(syncInput) {
+  if (!session) return;
+  const cap = Number(session.budget_cap);
+  const hasCap = Number.isFinite(cap) && cap > 0;
+  const over = overBudgetPeople();
+  elements.budgetManager.classList.toggle('over-budget', over.length > 0);
+  elements.budgetCurrent.textContent = hasCap ? `${money(cap)} hard cap` : 'No spending cap';
+  if (over.length) {
+    elements.budgetDetail.textContent = `${plural(over.length, 'person', 'people')} over the new cap: ${over.join(', ')}. Their submitted drinks were kept.`;
+  } else if (hasCap) {
+    elements.budgetDetail.textContent = 'Each person’s combined priced drinks must stay within this amount.';
+  } else {
+    elements.budgetDetail.textContent = 'Participants can submit any priced total.';
+  }
+  if (syncInput && document.activeElement !== elements.budgetInput) {
+    elements.budgetInput.value = hasCap ? cap.toFixed(2) : '';
+  }
+  const closed = session.status === 'closed';
+  elements.budgetInput.disabled = closed;
+  elements.saveBudget.disabled = closed;
+  elements.clearBudget.disabled = closed || !hasCap;
 }
 
 function tickDeadline() {
@@ -501,13 +553,20 @@ function renderOrders() {
   });
 
   people.forEach((person) => {
-    const section = node('section', 'person-group');
+    const cap = Number(session.budget_cap);
+    const personSpend = estimatedTotalForPerson(person.name);
+    const personOverBudget = Number.isFinite(cap) && cap > 0 && personSpend > cap + 0.0001;
+    const section = node('section', `person-group${personOverBudget ? ' over-budget' : ''}`);
     const heading = node('div', 'person-heading');
     const personCost = costByPerson.get(normalized(person.name));
     const totalLabel = personCost
       ? `${plural(person.drinks, 'drink')} · ${money(personCost.total)}`
       : plural(person.drinks, 'drink');
-    heading.append(node('h3', null, person.name), node('span', 'person-total', totalLabel));
+    const name = node('h3', null, person.name);
+    if (personOverBudget) {
+      name.append(document.createTextNode(' '), node('span', 'duplicate-badge budget-over-badge', 'Over budget'));
+    }
+    heading.append(name, node('span', 'person-total', totalLabel));
     const lines = node('div', 'person-lines');
     person.orders.forEach((order) => {
       const line = node('article', 'organizer-order-line');
@@ -602,6 +661,7 @@ function renderDrinkTotals() {
 function render() {
   renderRoom();
   renderDeadline(true);
+  renderBudget(true);
   renderOrders();
   renderDrinkTotals();
   renderCosts();
@@ -718,6 +778,38 @@ function extendDeadline(minutes) {
   updateDeadline(new Date(base + minutes * 60 * 1000));
 }
 
+async function updateBudget(value) {
+  const raw = value == null ? '' : String(value).trim();
+  const cap = raw === '' ? null : Number(raw);
+  if (cap !== null && (!Number.isFinite(cap) || cap < 0.01 || cap > 1000)) {
+    setStatus(elements.budgetStatus, 'Choose a budget from $0.01 to $1,000.00, or remove the cap.', 'err');
+    elements.budgetInput.focus();
+    return;
+  }
+  elements.saveBudget.disabled = true;
+  elements.clearBudget.disabled = true;
+  setStatus(elements.budgetStatus, cap === null ? 'Removing budget cap…' : 'Saving budget cap…', 'busy');
+  try {
+    const data = await request(`${apiBase}/budget`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ budget_cap: cap }),
+    });
+    applyPublicSession(data.session);
+    const over = overBudgetPeople();
+    const message = cap === null
+      ? 'Per-person budget removed.'
+      : over.length
+        ? `Budget saved. ${plural(over.length, 'person', 'people')} are over it; their submitted drinks were kept.`
+        : `Budget saved at ${money(data.session.budget_cap)} per person.`;
+    setStatus(elements.budgetStatus, message, 'ok');
+  } catch (error) {
+    setStatus(elements.budgetStatus, error.message, 'err');
+  } finally {
+    renderBudget(false);
+  }
+}
+
 async function removeOrder(order, button) {
   if (!window.confirm(`Remove ${order.drink} for ${order.person}?`)) return;
   button.disabled = true;
@@ -795,6 +887,18 @@ elements.deadlineForm.addEventListener('submit', (event) => {
 elements.deadlineQuickActions.forEach((button) => {
   button.addEventListener('click', () => extendDeadline(Number(button.dataset.extendMinutes)));
 });
+elements.budgetForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  updateBudget(elements.budgetInput.value);
+});
+elements.budgetInput.addEventListener('blur', () => {
+  const amount = Number(elements.budgetInput.value);
+  if (elements.budgetInput.value.trim() && Number.isFinite(amount)
+      && amount >= 0.01 && amount <= 1000) {
+    elements.budgetInput.value = amount.toFixed(2);
+  }
+});
+elements.clearBudget.addEventListener('click', () => updateBudget(null));
 elements.finalize.addEventListener('click', finalizeOrder);
 elements.continuePreview.addEventListener('click', () => {
   if (session && session.preview_url) window.location.assign(session.preview_url);

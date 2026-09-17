@@ -92,6 +92,30 @@
       </form>
     </section>
 
+    <section class="card budget-manager" id="budget-manager" aria-labelledby="budget-heading">
+      <div class="budget-summary">
+        <p class="step-label">Per-person budget</p>
+        <h2 id="budget-heading"><span id="budget-current">No spending cap</span></h2>
+        <p id="budget-detail">The cap applies to each person’s combined priced drinks.</p>
+      </div>
+      <form class="budget-form" id="budget-form">
+        <label for="budget-input">Hard cap per person</label>
+        <div class="budget-input-row">
+          <span class="currency-input"><span aria-hidden="true">$</span>
+            <input id="budget-input" type="number" inputmode="decimal"
+                   min="0.01" max="1000" step="0.01" placeholder="No cap">
+          </span>
+          <button class="btn primary compact" id="save-budget" type="submit">Save budget</button>
+        </div>
+        <div class="budget-quick-actions">
+          <span>Optional limit</span>
+          <button class="text-button" id="clear-budget" type="button">Remove cap</button>
+        </div>
+        <p class="budget-help">Lowering the cap keeps submitted drinks. People already over it can reduce or make no-cost edits, but cannot add spend.</p>
+        <div class="status" id="budget-status" role="status" aria-live="polite"></div>
+      </form>
+    </section>
+
     <section class="summary-grid" aria-label="Running totals">
       <article class="summary-card"><strong id="drink-count">0</strong><span>Drinks</span></article>
       <article class="summary-card"><strong id="people-count">0</strong><span>People</span></article>

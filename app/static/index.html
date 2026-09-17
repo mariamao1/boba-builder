@@ -91,6 +91,18 @@
             <input id="group-title" name="title" type="text" maxlength="120"
                    autocomplete="off" placeholder="Monday team boba">
           </label>
+          <div class="budget-field">
+            <label for="group-budget">
+              Per-person budget <span class="optional">(optional)</span>
+              <span class="group-currency-input">
+                <span aria-hidden="true">$</span>
+                <input id="group-budget" name="budget_cap" type="number" inputmode="decimal"
+                       min="0.01" max="1000" step="0.01" placeholder="10.00">
+              </span>
+            </label>
+            <p class="budget-preview" id="group-budget-preview">No spending cap</p>
+            <span class="store-help">Hard limit across all priced drinks submitted under one name.</span>
+          </div>
           <div class="deadline-field">
             <label for="group-deadline-preset">
               Close the order in

@@ -34,6 +34,14 @@
     <p id="deadline-detail">Checking the organizer’s cutoff time.</p>
   </section>
 
+  <section class="budget-card hidden" id="budget-card" aria-labelledby="budget-limit">
+    <div>
+      <p class="step-label">Your budget</p>
+      <strong id="budget-limit">Loading limit…</strong>
+    </div>
+    <p id="budget-hint">The limit covers all drinks submitted under the same name.</p>
+  </section>
+
   <section class="card order-card" id="order-card">
     <form id="order-form" novalidate>
       <div class="form-heading">
@@ -137,6 +145,7 @@
           </div>
           <button class="btn primary submit-drink" id="submit-drink" type="submit">Add my drink</button>
         </div>
+        <p class="budget-selection hidden" id="budget-selection" role="status" aria-live="polite"></p>
       </div>
       <div class="status" id="form-status" role="status" aria-live="polite"></div>
     </form>

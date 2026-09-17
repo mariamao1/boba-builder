@@ -15,6 +15,9 @@ const elements = {
   deadlineCard: document.getElementById('deadline-card'),
   deadlineCountdown: document.getElementById('deadline-countdown'),
   deadlineDetail: document.getElementById('deadline-detail'),
+  budgetCard: document.getElementById('budget-card'),
+  budgetLimit: document.getElementById('budget-limit'),
+  budgetHint: document.getElementById('budget-hint'),
   orderCard: document.getElementById('order-card'),
   form: document.getElementById('order-form'),
   formTitle: document.getElementById('form-title'),
@@ -49,6 +52,7 @@ const elements = {
   favoriteNameField: document.getElementById('favorite-name-field'),
   favoriteName: document.getElementById('favorite-name'),
   total: document.getElementById('estimated-total'),
+  budgetSelection: document.getElementById('budget-selection'),
   submit: document.getElementById('submit-drink'),
   cancelEdit: document.getElementById('cancel-edit'),
   formStatus: document.getElementById('form-status'),
@@ -69,6 +73,7 @@ let refreshing = false;
 let ownedOrders = readStorage(storageKey, {});
 let serverOffsetMs = 0;
 let deadlineTransitionHandled = false;
+let budgetBlocked = false;
 
 function readStorage(key, fallback) {
   try {
@@ -231,6 +236,7 @@ function renderRoom() {
   elements.orderCard.classList.toggle('hidden', !session.accepting_orders);
   if (!session.accepting_orders && editingOrderId) resetEditor();
   renderDeadline();
+  renderBudget();
 }
 
 function renderCategories() {
@@ -270,6 +276,101 @@ function renderSurpriseControls() {
 
 function normalized(value) {
   return String(value || '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function personKey(value) {
+  return String(value || '').toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function submittedTotal(person, excludeOrderId) {
+  if (!session) return 0;
+  const key = personKey(person);
+  if (!key) return 0;
+  return session.orders.reduce((total, order) => {
+    if (order.id === excludeOrderId || personKey(order.person) !== key
+        || order.estimated_total == null) return total;
+    return total + Number(order.estimated_total || 0);
+  }, 0);
+}
+
+function selectedUnitPrice() {
+  if (!selectedItem) return null;
+  let price = Number(selectedItem.price || 0);
+  selectedItem.option_groups.forEach((group) => {
+    const values = Array.isArray(selections[group.key])
+      ? selections[group.key] : [selections[group.key]].filter(Boolean);
+    values.forEach((value) => {
+      const option = selectedOption(group, value);
+      price += Number((option && option.price) || 0);
+    });
+  });
+  return price;
+}
+
+function selectedEstimate() {
+  const unitPrice = selectedUnitPrice();
+  if (unitPrice == null) return null;
+  const quantity = Math.max(1, Math.min(20, Number(elements.quantity.value) || 1));
+  return unitPrice * quantity;
+}
+
+function budgetState(person, draftTotal, orderId) {
+  const cap = Number(session && session.budget_cap);
+  if (!Number.isFinite(cap) || cap <= 0 || draftTotal == null) return null;
+  const previous = submittedTotal(person, null);
+  const candidate = submittedTotal(person, orderId) + draftTotal;
+  const grandfathered = Boolean(orderId) && candidate > cap + 0.0001
+    && candidate <= previous + 0.0001;
+  return {
+    cap, previous, candidate, grandfathered,
+    blocked: candidate > cap + 0.0001 && !grandfathered,
+  };
+}
+
+function renderBudget() {
+  const cap = Number(session && session.budget_cap);
+  const hasCap = Number.isFinite(cap) && cap > 0;
+  elements.budgetCard.classList.toggle('hidden', !hasCap);
+  if (!hasCap) {
+    budgetBlocked = false;
+    elements.budgetSelection.classList.add('hidden');
+    return;
+  }
+  elements.budgetLimit.textContent = `${money(cap)} per person`;
+  const person = elements.person.value.trim();
+  const spent = submittedTotal(person, null);
+  if (person && spent > cap + 0.0001) {
+    elements.budgetHint.textContent = `${person} already has ${money(spent)} submitted. Existing drinks stay, but their priced total cannot increase.`;
+  } else if (person && spent > 0) {
+    elements.budgetHint.textContent = `${person} has ${money(spent)} submitted and ${money(Math.max(0, cap - spent))} left.`;
+  } else {
+    elements.budgetHint.textContent = 'This hard limit covers all priced drinks submitted under the same name.';
+  }
+  renderBudgetSelection();
+}
+
+function renderBudgetSelection(total) {
+  const draftTotal = total == null ? selectedEstimate() : total;
+  const state = editingFavoriteId ? null
+    : budgetState(elements.person.value.trim(), draftTotal, editingOrderId);
+  if (!state || !selectedItem) {
+    budgetBlocked = false;
+    elements.budgetSelection.classList.add('hidden');
+    elements.submit.disabled = false;
+    return;
+  }
+  elements.budgetSelection.classList.remove('hidden');
+  elements.budgetSelection.classList.toggle('over', state.blocked);
+  const name = elements.person.value.trim() || 'Your order';
+  if (state.blocked) {
+    elements.budgetSelection.textContent = `${name}'s total would be ${money(state.candidate)}, over the ${money(state.cap)} limit. Choose a cheaper option or reduce the quantity.`;
+  } else if (state.grandfathered) {
+    elements.budgetSelection.textContent = `${name}'s existing ${money(state.candidate)} total is over the new limit but is grandfathered. This edit does not increase it.`;
+  } else {
+    elements.budgetSelection.textContent = `${money(state.candidate)} combined · ${money(Math.max(0, state.cap - state.candidate))} remaining after this selection.`;
+  }
+  budgetBlocked = state.blocked;
+  elements.submit.disabled = budgetBlocked;
 }
 
 function renderDrinkList() {
@@ -462,22 +563,23 @@ function updateEstimate() {
   if (!selectedItem) {
     elements.total.textContent = '—';
     elements.selectedOptions.textContent = '';
+    renderBudgetSelection();
     return;
   }
-  let price = Number(selectedItem.price || 0);
   const summary = [];
   selectedItem.option_groups.forEach((group) => {
     const values = Array.isArray(selections[group.key])
       ? selections[group.key] : [selections[group.key]].filter(Boolean);
     if (values.length) summary.push(`${group.name}: ${values.join(', ')}`);
-    values.forEach((value) => {
-      const option = selectedOption(group, value);
-      price += Number((option && option.price) || 0);
-    });
   });
   elements.selectedOptions.textContent = summary.length ? summary.join(' · ') : 'Store defaults';
+  const unitPrice = selectedUnitPrice();
   const quantity = Math.max(1, Math.min(20, Number(elements.quantity.value) || 1));
-  elements.total.textContent = money(price * quantity);
+  elements.selectedPrice.textContent = quantity > 1
+    ? `${money(unitPrice)} each` : money(unitPrice);
+  const total = selectedEstimate();
+  elements.total.textContent = money(total);
+  renderBudgetSelection(total);
 }
 
 function validateSelections() {
@@ -525,6 +627,27 @@ function buildPayload() {
   return payload;
 }
 
+function payloadEstimate(item, payload) {
+  let price = Number(item.price || 0);
+  const unmatchedToppings = (payload.toppings || []).slice();
+  item.option_groups.forEach((group) => {
+    let values = [];
+    if (group.axis === 'toppings') {
+      values = group.options
+        .filter((option) => unmatchedToppings.includes(option.label))
+        .map((option) => option.label);
+      values.forEach((value) => unmatchedToppings.splice(unmatchedToppings.indexOf(value), 1));
+    } else if (payload[group.axis]) {
+      values = [payload[group.axis]];
+    }
+    values.forEach((value) => {
+      const option = selectedOption(group, value);
+      price += Number((option && option.price) || 0);
+    });
+  });
+  return price * Math.max(1, Number(payload.quantity) || 1);
+}
+
 function rememberOrder(orderId, token) {
   ownedOrders[orderId] = { token };
   writeStorage(storageKey, ownedOrders);
@@ -557,7 +680,11 @@ function resetEditor(options) {
   elements.favoriteToggleTitle.textContent = 'Save as a usual';
   elements.search.value = '';
   if (!keepStatus) setFormStatus('', '');
+  budgetBlocked = false;
+  elements.budgetSelection.classList.add('hidden');
+  elements.submit.disabled = false;
   renderDrinkList();
+  renderBudget();
 }
 
 function orderDetails(order) {
@@ -648,6 +775,14 @@ async function addFavorite(favorite) {
     if (check.item) editFavorite(favorite);
     return;
   }
+  const favoriteBudget = budgetState(person, payloadEstimate(check.item, check.payload), null);
+  if (favoriteBudget && favoriteBudget.blocked) {
+    setFavoriteStatus(
+      `${favorite.name} would put ${person} at ${money(favoriteBudget.candidate)}, over the ${money(favoriteBudget.cap)} per-person limit.`,
+      'err'
+    );
+    return;
+  }
 
   addingFavoriteId = favorite.id;
   setFavoriteStatus(`Adding ${favorite.name}…`, 'busy');
@@ -724,7 +859,10 @@ function renderGroupOrders() {
   const list = node('div', 'group-order-list');
   session.orders.forEach((order) => {
     const ownership = ownedOrders[order.id];
-    const card = node('article', `group-order${ownership ? ' own-order' : ''}`);
+    const cap = Number(session.budget_cap);
+    const personOverBudget = Number.isFinite(cap) && cap > 0
+      && submittedTotal(order.person, null) > cap + 0.0001;
+    const card = node('article', `group-order${ownership ? ' own-order' : ''}${personOverBudget ? ' over-budget' : ''}`);
     const copy = node('div');
     const person = node('p', 'order-person', order.person);
     if (ownership) {
@@ -737,6 +875,7 @@ function renderGroupOrders() {
     const cost = node('div', 'group-order-cost');
     if (order.quantity > 1) cost.append(node('span', 'group-order-qty', `×${order.quantity}`));
     if (order.estimated_total != null) cost.append(node('strong', null, money(order.estimated_total)));
+    if (personOverBudget) cost.append(node('span', 'budget-badge', 'Over budget'));
     card.append(copy, cost);
     if (ownership && session.accepting_orders) {
       const actions = node('div', 'group-order-actions');
@@ -816,6 +955,11 @@ async function submitOrder(event) {
     return;
   }
   if (!elements.form.reportValidity() || !validateSelections()) return;
+  updateEstimate();
+  if (budgetBlocked) {
+    setFormStatus('This selection is over the per-person budget. Reduce the price or quantity before submitting.', 'err');
+    return;
+  }
 
   elements.submit.disabled = true;
   setFormStatus(editingOrderId ? 'Saving your changes…' : 'Adding your drink…', 'busy');
@@ -856,9 +1000,9 @@ async function submitOrder(event) {
     elements.search.focus();
   } catch (error) {
     setFormStatus(error.message, 'err');
-    if (error.code === 'deadline_passed') refreshSession(false);
+    if (error.code === 'deadline_passed' || error.code === 'budget_exceeded') refreshSession(false);
   } finally {
-    elements.submit.disabled = false;
+    elements.submit.disabled = budgetBlocked;
   }
 }
 
@@ -908,6 +1052,10 @@ elements.removeDrink.addEventListener('click', () => {
 });
 elements.cancelEdit.addEventListener('click', resetEditor);
 elements.quantity.addEventListener('input', updateEstimate);
+elements.person.addEventListener('input', () => {
+  renderBudget();
+  if (selectedItem) updateEstimate();
+});
 elements.saveFavorite.addEventListener('change', () => {
   if (elements.saveFavorite.checked && !elements.favoriteName.value.trim() && selectedItem) {
     elements.favoriteName.value = selectedItem.name;

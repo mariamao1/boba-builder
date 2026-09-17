@@ -20,16 +20,18 @@
 .room-strip.expired .status-dot, .room-strip.error .status-dot { background: var(--err); }
 .room-strip strong { color: var(--ink); }
 
-.deadline-card {
+.deadline-card, .budget-card {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
   margin: 0 0 1rem; padding: .9rem 1rem; border: 1px solid var(--accent);
   border-radius: 13px; background: var(--accent-soft);
 }
-.deadline-card .step-label { margin-bottom: .1rem; }
-.deadline-card strong {
+.deadline-card .step-label, .budget-card .step-label { margin-bottom: .1rem; }
+.deadline-card strong, .budget-card strong {
   color: var(--brand); font-size: 1.35rem; line-height: 1.1; font-variant-numeric: tabular-nums;
 }
-.deadline-card p:last-child { margin: 0; color: var(--muted); font-size: .84rem; text-align: right; }
+.deadline-card p:last-child, .budget-card p:last-child {
+  max-width: 25rem; margin: 0; color: var(--muted); font-size: .84rem; text-align: right;
+}
 .deadline-card.paused { border-color: var(--warn); background: var(--warn-soft); }
 .deadline-card.closed { border-color: var(--err); background: var(--err-soft); }
 .deadline-card.closed strong { color: var(--err); }
@@ -201,6 +203,11 @@
 .estimate-label { display: block; font-size: .75rem; }
 #estimated-total { display: block; font-size: 1.18rem; }
 .submit-drink { min-width: 10rem; min-height: 2.85rem; }
+.budget-selection {
+  margin: .65rem 0 0; padding: .55rem .7rem; border-radius: 9px;
+  background: var(--ok-soft); color: var(--ok); font-size: .82rem; font-weight: 650;
+}
+.budget-selection.over { background: var(--err-soft); color: var(--err); }
 .status.ok { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
 .status.surprise { background: var(--accent-soft); border-color: var(--accent); }
 
@@ -217,6 +224,7 @@
   padding: .75rem .8rem; border: 1px solid var(--line); border-radius: 11px; background: var(--bg);
 }
 .group-order.own-order { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.group-order.over-budget { border-color: var(--err); }
 .group-order h3 { margin: 0; font-size: .98rem; }
 .order-person { margin: 0 0 .12rem; color: var(--muted); font-size: .76rem; font-weight: 650; }
 .yours-badge {
@@ -227,6 +235,11 @@
 .group-order-detail { margin: .2rem 0 0; color: var(--muted); font-size: .82rem; }
 .group-order-qty { color: var(--brand); font-weight: 750; white-space: nowrap; }
 .group-order-cost { display: grid; justify-items: end; align-content: start; gap: .15rem; color: var(--brand); font-variant-numeric: tabular-nums; }
+.budget-badge {
+  padding: .08rem .38rem; border-radius: 999px; background: var(--err-soft);
+  color: var(--err); font-size: .66rem; font-weight: 750; text-transform: uppercase;
+  letter-spacing: .03em; white-space: nowrap;
+}
 .group-order-actions { grid-column: 1 / -1; display: flex; gap: .8rem; }
 .group-order-actions .text-button { padding-left: 0; }
 .group-order-actions .delete-order { color: var(--err); }
@@ -239,8 +252,8 @@
   .participant-wrap { width: min(100% - 1rem, 720px); }
   .participant-head { padding: 1.15rem 0 1rem; }
   .room-strip { margin: .75rem 0; }
-  .deadline-card { align-items: flex-start; flex-direction: column; gap: .35rem; }
-  .deadline-card p:last-child { text-align: left; }
+  .deadline-card, .budget-card { align-items: flex-start; flex-direction: column; gap: .35rem; }
+  .deadline-card p:last-child, .budget-card p:last-child { text-align: left; }
   .card { padding: 1rem .9rem; margin-bottom: .8rem; }
   .drink-list, .option-grid { grid-template-columns: 1fr; }
   .favorite-card { grid-template-columns: minmax(0, 1fr) auto; }

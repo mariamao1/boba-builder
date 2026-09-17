@@ -62,6 +62,9 @@ Python 3.11+, standard library only — nothing to install.
 - [x] **Task 18** — per-cup pickup labels with full drink specs, on-screen
       checklist, printable slips, and copyable text
       (`docs/task18-drink-labels.md`)
+- [x] **Task 20** — organizer-set hard per-person budget caps with live
+      selection feedback and grandfathered submitted drinks
+      (`docs/task20-per-person-budget.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.
