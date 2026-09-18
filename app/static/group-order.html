@@ -70,6 +70,15 @@
         <div class="favorite-status" id="favorite-status" role="status" aria-live="polite"></div>
       </section>
 
+      <section class="popular-picks" id="popular-picks" aria-labelledby="popular-picks-title" hidden>
+        <div>
+          <p class="step-label">Popular at this store</p>
+          <h3 id="popular-picks-title">Top picks this week</h3>
+        </div>
+        <p class="popular-picks-help">Choose a base drink, then make the options yours.</p>
+        <div class="popular-picks-list" id="popular-picks-list"></div>
+      </section>
+
       <div id="drink-picker">
         <div class="picker-heading">
           <label for="drink-search">Pick a drink</label>
@@ -172,6 +181,7 @@
 
 <script src="/static/favorites.js"></script>
 <script src="/static/randomizer.js"></script>
+<script src="/static/leaderboard.js"></script>
 <script src="/static/group-order.js"></script>
 </body>
 </html>

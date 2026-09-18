@@ -37,6 +37,8 @@ KEEP_SESSIONS = 200
 MAX_ORDERS = 200
 MAX_QUANTITY = 20
 MAX_BUDGET_CAP = 1000
+POPULARITY_WINDOW_DAYS = 7
+POPULARITY_LIMIT = 5
 
 ORDER_FIELDS = (
     "drink", "size", "sugar", "ice", "toppings", "milk", "temperature",
@@ -767,6 +769,97 @@ def set_budget_cap(room_id: str, budget_cap, organizer_token: str | None, *,
         room["updated_at"] = _timestamp(current)
         _write(room)
         return public_room(room, now=current)
+
+
+def _drink_key(value) -> str:
+    """Case-insensitive base-drink key shared conceptually with the UI."""
+    return " ".join(str(value or "").casefold().split())
+
+
+def popular_drinks(*, restaurant_id: str | None = None,
+                   now: dt.datetime | None = None,
+                   days: int = POPULARITY_WINDOW_DAYS,
+                   limit: int = POPULARITY_LIMIT) -> dict:
+    """Rank recent group-order cups by base drink.
+
+    This deliberately counts the current lines stored in group-order rooms,
+    not exact modifier configurations. A quantity of three contributes three
+    cups but one order line. Deleted drinks no longer count. The rolling
+    window matches this store's room-retention period, so the claim remains
+    honest without introducing a second analytics database.
+    """
+    current = _as_utc(now)
+    days = max(1, int(days))
+    limit = max(0, int(limit))
+    since = current - dt.timedelta(days=days)
+    counts: dict[str, dict] = {}
+    room_ids: set[str] = set()
+
+    for path in _directory().glob("*.json"):
+        try:
+            room = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(room, dict):
+            continue
+        if restaurant_id and (room.get("restaurant_id") or menu.TARGET_STORE) != restaurant_id:
+            continue
+
+        room_contributed = False
+        for order in room.get("orders") or []:
+            if not isinstance(order, dict):
+                continue
+            raw_timestamp = order.get("created_at") or room.get("created_at")
+            try:
+                ordered_at = _parse_timestamp(raw_timestamp)
+                ordered_at = _as_utc(ordered_at)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if ordered_at < since or ordered_at > current:
+                continue
+
+            drink = " ".join(str(order.get("drink") or "").split())
+            key = _drink_key(drink)
+            quantity = order.get("quantity", 1)
+            if not key or isinstance(quantity, bool) or not isinstance(quantity, int):
+                continue
+            if quantity < 1:
+                continue
+            entry = counts.setdefault(key, {
+                "drink": drink,
+                "drinks": 0,
+                "orders": 0,
+                "_first_at": ordered_at,
+            })
+            if ordered_at < entry["_first_at"]:
+                entry["drink"] = drink
+                entry["_first_at"] = ordered_at
+            entry["drinks"] += quantity
+            entry["orders"] += 1
+            room_contributed = True
+        if room_contributed:
+            room_ids.add(str(room.get("id") or path.stem))
+
+    ranked = sorted(
+        counts.values(),
+        key=lambda entry: (
+            -entry["drinks"], -entry["orders"], _drink_key(entry["drink"])),
+    )[:limit]
+    entries = [
+        {key: entry[key] for key in ("drink", "drinks", "orders")}
+        for entry in ranked
+    ]
+    return {
+        "scope": "recent_group_orders",
+        "window_days": days,
+        "since": _timestamp(since),
+        "as_of": _timestamp(current),
+        "restaurant_id": restaurant_id,
+        "entries": entries,
+        "total_drinks": sum(entry["drinks"] for entry in counts.values()),
+        "total_orders": sum(entry["orders"] for entry in counts.values()),
+        "group_orders": len(room_ids),
+    }
 
 
 def prune(*, now: dt.datetime | None = None, keep: int = KEEP_SESSIONS) -> None:

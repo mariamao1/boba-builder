@@ -201,6 +201,32 @@ main > .back-row.top-links:first-child { justify-content: flex-end; margin: 1rem
 }
 .converge-note strong { color: var(--ink); }
 
+/* --- recent drink leaderboard ------------------------------------------ */
+
+.leaderboard-heading {
+  display: grid; grid-template-columns: minmax(12rem, .7fr) minmax(18rem, 1.3fr);
+  align-items: end; gap: 1rem; margin-bottom: .9rem;
+}
+.leaderboard-heading h2 { margin: 0; }
+.leaderboard-heading > p { margin: 0; color: var(--muted); font-size: .86rem; }
+.leaderboard-list { display: grid; gap: .45rem; margin: 0; padding: 0; list-style: none; }
+.leaderboard-row {
+  display: grid; grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: center; gap: .7rem; padding: .55rem .65rem;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+}
+.leaderboard-rank {
+  display: grid; place-items: center; width: 1.8rem; height: 1.8rem;
+  border-radius: 50%; background: var(--brand-soft); color: var(--brand);
+  font-size: .82rem; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.leaderboard-row:first-child .leaderboard-rank {
+  background: var(--accent); color: #fff;
+}
+.leaderboard-drink { min-width: 0; }
+.leaderboard-count { color: var(--muted); font-size: .84rem; white-space: nowrap; }
+.leaderboard-empty { padding: .8rem; color: var(--muted); text-align: center; }
+
 /* --- cards -------------------------------------------------------------- */
 
 .card {
@@ -556,7 +582,7 @@ table.orders td .drink-input { min-width: 8rem; }
 .saved-problems h3 { margin-bottom: .45rem; }
 
 @media (max-width: 520px) {
-  .path-grid, .group-form-grid, .flow-heading { grid-template-columns: 1fr; }
+  .path-grid, .group-form-grid, .flow-heading, .leaderboard-heading { grid-template-columns: 1fr; }
   .path-card { min-height: 0; }
   .group-form-grid .store-field, .group-form-grid .budget-field,
   .group-form-grid .deadline-field { grid-column: auto; }

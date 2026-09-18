@@ -29,6 +29,20 @@
     <li><span>3</span> Open the cart</li>
   </ol>
 
+  <section class="card leaderboard-card" aria-labelledby="leaderboard-title">
+    <div class="leaderboard-heading">
+      <div>
+        <p class="choice-kicker">Trending this week</p>
+        <h2 id="leaderboard-title">Top 5 drinks</h2>
+      </div>
+      <p>Cups submitted across all group orders in the last 7 days. Sizes, sweetness, ice,
+        and toppings all count toward the same base drink.</p>
+    </div>
+    <ol class="leaderboard-list" id="popular-drinks" aria-live="polite">
+      <li class="leaderboard-empty">Loading popular drinks…</li>
+    </ol>
+  </section>
+
   <section class="entry-choice" id="start" aria-labelledby="start-h">
     <div class="entry-heading">
       <p class="choice-kicker">Start here</p>
@@ -243,6 +257,7 @@
     Kung Fu Tea cart link — you check it and pay in your own browser.</p>
 </main>
 
+<script src="/static/leaderboard.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

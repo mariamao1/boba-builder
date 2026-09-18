@@ -26,6 +26,8 @@ const elements = {
   favoritesList: document.getElementById('favorites-list'),
   favoritesCount: document.getElementById('favorites-count'),
   favoriteStatus: document.getElementById('favorite-status'),
+  popularPicks: document.getElementById('popular-picks'),
+  popularPicksList: document.getElementById('popular-picks-list'),
   picker: document.getElementById('drink-picker'),
   search: document.getElementById('drink-search'),
   menuCount: document.getElementById('menu-count'),
@@ -63,6 +65,7 @@ const elements = {
 
 let session = null;
 let menu = null;
+let leaderboard = null;
 let activeCategory = '';
 let selectedItem = null;
 let selections = {};
@@ -761,6 +764,30 @@ function renderFavorites() {
   updateFavoriteSaveControls();
 }
 
+function renderPopularPicks() {
+  if (!menu || !leaderboard || !window.BobaLeaderboard) return;
+  const picks = window.BobaLeaderboard.quickPicks(
+    leaderboard.entries, menu.items, 5);
+  window.BobaLeaderboard.renderQuickPicks(
+    document, elements.popularPicks, elements.popularPicksList, picks, (item) => {
+      chooseDrink(item);
+      elements.editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+}
+
+async function refreshLeaderboard() {
+  if (!menu || !session) return;
+  try {
+    const data = await request(
+      `/api/leaderboard?restaurant_id=${encodeURIComponent(session.restaurant_id)}`);
+    leaderboard = data.leaderboard;
+    renderPopularPicks();
+  } catch (_error) {
+    // Recommendations are optional; a failed analytics read must not block ordering.
+    elements.popularPicks.hidden = true;
+  }
+}
+
 async function addFavorite(favorite) {
   const person = elements.person.value.trim();
   if (!person) {
@@ -800,6 +827,7 @@ async function addFavorite(favorite) {
     setFavoriteStatus(`${favorite.name} was added to the group order.`, 'ok');
     renderRoom();
     renderGroupOrders();
+    refreshLeaderboard();
   } catch (error) {
     setFavoriteStatus(error.message, 'err');
     if (error.code === 'deadline_passed') refreshSession(false);
@@ -927,6 +955,7 @@ async function deleteOrder(order) {
     if (editingOrderId === order.id) resetEditor();
     renderRoom();
     renderGroupOrders();
+    refreshLeaderboard();
   } catch (error) {
     window.alert(error.message);
     if (error.code === 'deadline_passed') refreshSession(false);
@@ -997,6 +1026,7 @@ async function submitOrder(event) {
     renderRoom();
     renderFavorites();
     renderGroupOrders();
+    refreshLeaderboard();
     elements.search.focus();
   } catch (error) {
     setFormStatus(error.message, 'err');
@@ -1091,6 +1121,7 @@ request(apiBase)
     renderDrinkList();
     renderFavorites();
     renderGroupOrders();
+    refreshLeaderboard();
     window.setInterval(() => {
       if (!document.hidden) refreshSession(false);
     }, 15000);

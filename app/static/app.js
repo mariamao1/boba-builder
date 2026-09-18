@@ -460,6 +460,18 @@ fetch('/api/menu-hints').then((response) => response.json()).then((hints) => {
   $('hints-body').textContent = 'Menu unavailable right now — the columns above still apply.';
 });
 
+fetch('/api/leaderboard').then(async (response) => {
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) throw new Error(data.error || 'Leaderboard unavailable');
+  window.BobaLeaderboard.renderBoard(document, $('popular-drinks'), data.leaderboard);
+}).catch(() => {
+  $('popular-drinks').textContent = '';
+  const message = document.createElement('li');
+  message.className = 'leaderboard-empty';
+  message.textContent = 'Popular drinks are unavailable right now';
+  $('popular-drinks').append(message);
+});
+
 const requestedPath = new URLSearchParams(window.location.search).get('method');
 if (requestedPath === 'group' || requestedPath === 'sheet') selectPath(requestedPath);
 initializeDeadline();

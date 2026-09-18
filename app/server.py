@@ -18,6 +18,7 @@ Routes
     GET  /api/drinks?q=          type-ahead search over the store's menu
     GET  /api/stores             captured stores available for group orders
     GET  /api/menu               participant menu with per-drink option groups
+    GET  /api/leaderboard        top five base drinks from the last seven days
     GET  /group-order/<room_id>  participant-facing order entry page
     GET  /group-order/<room_id>/organizer  private organizer dashboard
     POST /api/runs/<run_id>/rows/<n>  edit one row: any of {"drink", "size",
@@ -251,6 +252,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error("that store menu is not available", HTTPStatus.NOT_FOUND)
             return self._json({"ok": True, "menu": menu.participant_menu(restaurant_id)},
                               extra={"Cache-Control": "no-cache"})
+
+        if path == "/api/leaderboard":
+            query = parse_qs(parts.query)
+            restaurant_id = (query.get("restaurant_id") or [None])[0]
+            if restaurant_id and menu.store_summary(restaurant_id) is None:
+                return self._error("that store menu is not available", HTTPStatus.NOT_FOUND)
+            return self._json({
+                "ok": True,
+                "leaderboard": group_orders.popular_drinks(
+                    restaurant_id=restaurant_id),
+            }, extra={"Cache-Control": "no-store"})
 
         if path == "/api/drinks":
             # Type-ahead for the "pick a drink" box on the preview page.
