@@ -201,6 +201,59 @@ main > .back-row.top-links:first-child { justify-content: flex-end; margin: 1rem
 }
 .converge-note strong { color: var(--ink); }
 
+/* --- first-time organizer hints ---------------------------------------- */
+
+.onboarding-callout {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; margin: 0 0 1rem; padding: 1rem;
+  border: 1px solid var(--accent); border-radius: 12px; background: var(--accent-soft);
+}
+.onboarding-callout[hidden] { display: none; }
+.onboarding-copy { min-width: 0; }
+.onboarding-copy h3 { margin: 0 0 .45rem; font-size: 1rem; }
+.onboarding-copy > p:last-child { margin: .65rem 0 0; font-size: .88rem; }
+.onboarding-kicker {
+  margin: 0 0 .1rem; color: var(--accent); font-size: .7rem; font-weight: 800;
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.onboarding-choices, .onboarding-steps {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem;
+  margin: .55rem 0 0; padding: 0; list-style: none;
+}
+.onboarding-choices li, .onboarding-steps li {
+  padding: .65rem .7rem; border-radius: 9px; background: var(--card); font-size: .86rem;
+}
+.onboarding-choices li { padding: 0; }
+.onboarding-choices a {
+  display: block; height: 100%; padding: .65rem .7rem; border: 1px solid transparent;
+  border-radius: 9px; color: var(--ink); text-decoration: none;
+}
+.onboarding-choices a:hover { border-color: var(--brand); }
+.onboarding-choices a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.onboarding-choices strong, .onboarding-steps strong { display: block; margin-bottom: .1rem; }
+.onboarding-choice-action {
+  display: block; margin-top: .4rem; color: var(--brand); font-weight: 650;
+}
+.onboarding-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); counter-reset: handoff-step; }
+.onboarding-steps li { counter-increment: handoff-step; }
+.onboarding-steps li::before {
+  content: counter(handoff-step); display: grid; place-items: center;
+  width: 1.5rem; height: 1.5rem; margin-bottom: .35rem; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: .75rem; font-weight: 750;
+}
+.onboarding-steps span { display: block; color: var(--muted); }
+.onboarding-dismiss { flex: none; }
+.onboarding-reopen { margin: 0 0 .8rem auto; }
+.onboarding-wrap > .onboarding-reopen { display: block; margin-left: 0; }
+.onboarding-wrap > .onboarding-reopen[hidden] { display: none; }
+.text-button {
+  padding: 0; border: 0; background: transparent; color: var(--brand);
+  font: inherit; font-size: .86rem; font-weight: 600; text-decoration: underline;
+  text-underline-offset: .16em; cursor: pointer;
+}
+.text-button:hover { color: var(--ink); }
+.text-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 /* --- recent drink leaderboard ------------------------------------------ */
 
 .leaderboard-heading {
@@ -590,6 +643,9 @@ table.orders td .drink-input { min-width: 8rem; }
   .budget-preview { margin: 0; }
   .reconciliation-stats { grid-template-columns: 1fr; }
   .save-order-form { grid-template-columns: 1fr; }
+  .onboarding-callout { display: grid; }
+  .onboarding-choices, .onboarding-steps { grid-template-columns: 1fr; }
+  .onboarding-dismiss { justify-self: start; }
 }
 
 /* --- pickup labels -------------------------------------------------------- */

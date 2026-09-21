@@ -50,6 +50,21 @@
       <p>Both options lead to the same review, reconciliation, and cart handoff.</p>
     </div>
 
+    <aside class="onboarding-callout" id="entry-onboarding" aria-labelledby="entry-onboarding-title" hidden>
+      <div class="onboarding-copy">
+        <p class="onboarding-kicker">First group order?</p>
+        <h3 id="entry-onboarding-title">Choose based on where everyone’s orders are now</h3>
+        <ul class="onboarding-choices">
+          <li><a href="/?method=group" data-onboarding-method="group"><strong>Nothing collected yet?</strong> Start a group link. Everyone uses the live menu to enter and update their own drinks.<span class="onboarding-choice-action">Start a group link <span aria-hidden="true">→</span></span></a></li>
+          <li><a href="/?method=sheet" data-onboarding-method="sheet"><strong>Already have a list?</strong> Import the spreadsheet you have. You’ll check the rows before anything reaches a cart.<span class="onboarding-choice-action">Import a spreadsheet <span aria-hidden="true">→</span></span></a></li>
+        </ul>
+        <p><strong>Both routes end the same way:</strong> Boba Builder prepares one cart, then you open Kung Fu Tea to review and pay.</p>
+      </div>
+      <button class="btn onboarding-dismiss" id="dismiss-entry-onboarding" type="button">Got it</button>
+    </aside>
+    <button class="text-button onboarding-reopen" id="show-entry-onboarding" type="button"
+            aria-controls="entry-onboarding" hidden>Show first-time guide</button>
+
     <div class="path-grid">
       <button class="path-card" id="choose-group" type="button"
               aria-controls="group-path" aria-expanded="false">
@@ -257,6 +272,7 @@
     Kung Fu Tea cart link — you check it and pay in your own browser.</p>
 </main>
 
+<script src="/static/onboarding.js"></script>
 <script src="/static/leaderboard.js"></script>
 <script src="/static/app.js"></script>
 </body>

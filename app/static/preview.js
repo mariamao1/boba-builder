@@ -1194,6 +1194,61 @@ function saveFinishedOrder(run) {
   return section;
 }
 
+function handoffOnboarding() {
+  if (!window.BobaOnboarding) return null;
+
+  const wrap = el('div', 'onboarding-wrap');
+  const guide = el('aside', 'onboarding-callout onboarding-handoff');
+  guide.id = 'handoff-onboarding';
+  guide.setAttribute('aria-labelledby', 'handoff-onboarding-title');
+  const copy = el('div', 'onboarding-copy');
+  copy.append(el('p', 'onboarding-kicker', 'Before you build the cart'));
+  const title = el('h3', null, 'You still check out at Kung Fu Tea');
+  title.id = 'handoff-onboarding-title';
+  copy.append(title);
+
+  const steps = el('ol', 'onboarding-steps');
+  [
+    ['Build here', 'Boba Builder adds the reviewed drinks to a new cart. Nothing is ordered yet.'],
+    ['Open Kung Fu Tea', 'The next screen gives you a link to the editable cart on Kung Fu Tea’s site.'],
+    ['Review and pay there', 'Check availability, taxes, tip, and the final total, then submit payment yourself.'],
+  ].forEach(([heading, detail]) => {
+    const item = el('li');
+    item.append(el('strong', null, heading), el('span', null, detail));
+    steps.append(item);
+  });
+  copy.append(steps);
+
+  const dismiss = el('button', 'btn onboarding-dismiss', 'Got it');
+  dismiss.type = 'button';
+  const reopen = el('button', 'text-button onboarding-reopen', 'How the cart handoff works');
+  reopen.type = 'button';
+  reopen.setAttribute('aria-controls', 'handoff-onboarding');
+
+  const setOpen = (open, moveFocus) => {
+    guide.hidden = !open;
+    reopen.hidden = open;
+    if (moveFocus) (open ? dismiss : reopen).focus();
+  };
+  wrap.dismissGuide = () => {
+    window.BobaOnboarding.dismiss('handoff');
+    setOpen(false, false);
+  };
+  dismiss.addEventListener('click', () => {
+    wrap.dismissGuide();
+    reopen.focus();
+  });
+  reopen.addEventListener('click', () => {
+    window.BobaOnboarding.show('handoff');
+    setOpen(true, true);
+  });
+
+  guide.append(copy, dismiss);
+  wrap.append(guide, reopen);
+  setOpen(window.BobaOnboarding.shouldShow('handoff'), false);
+  return wrap;
+}
+
 function renderNextStep(run, stages) {
   const built = run.cart && run.cart.review_ready;
   const viewingCart = showingCart && Boolean(run.cart || run.handoff_url);
@@ -1211,6 +1266,8 @@ function renderNextStep(run, stages) {
   }
 
   const actions = el('div', 'actions');
+  const handoffGuide = viewingCart ? null : handoffOnboarding();
+  if (handoffGuide) next.append(handoffGuide);
   if (!viewingCart) {
     const split = costBreakdown(run.costs, (run.source || {}).title);
     if (split) next.append(split);
@@ -1246,6 +1303,7 @@ function renderNextStep(run, stages) {
   }
 
   go.addEventListener('click', async () => {
+    if (handoffGuide) handoffGuide.dismissGuide();
     if (built && !viewingCart) {
       showingCart = true;
       render(run, stages);

@@ -9,6 +9,26 @@ let availableStores = [];
 let matchingStores = [];
 let activeStoreIndex = -1;
 
+/* --- first-time organizer hint ----------------------------------------- */
+
+function setEntryOnboarding(open, moveFocus) {
+  const guide = $('entry-onboarding');
+  const reopen = $('show-entry-onboarding');
+  guide.hidden = !open;
+  reopen.hidden = open;
+  if (moveFocus) (open ? $('dismiss-entry-onboarding') : reopen).focus();
+}
+
+$('dismiss-entry-onboarding').addEventListener('click', () => {
+  if (window.BobaOnboarding) window.BobaOnboarding.dismiss('entry');
+  setEntryOnboarding(false, true);
+});
+
+$('show-entry-onboarding').addEventListener('click', () => {
+  if (window.BobaOnboarding) window.BobaOnboarding.show('entry');
+  setEntryOnboarding(true, true);
+});
+
 /* --- collection path ---------------------------------------------------- */
 
 function selectPath(which) {
@@ -26,6 +46,17 @@ function selectPath(which) {
 
 $('choose-group').addEventListener('click', () => selectPath('group'));
 $('choose-sheet').addEventListener('click', () => selectPath('sheet'));
+document.querySelectorAll('[data-onboarding-method]').forEach((link) => {
+  link.addEventListener('click', (event) => {
+    if (event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const which = link.getAttribute('data-onboarding-method');
+    selectPath(which);
+    window.requestAnimationFrame(() => {
+      $(`choose-${which}`).scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+});
 
 /* --- tabs ---------------------------------------------------------------- */
 
@@ -472,6 +503,7 @@ fetch('/api/leaderboard').then(async (response) => {
   $('popular-drinks').append(message);
 });
 
+setEntryOnboarding(!window.BobaOnboarding || window.BobaOnboarding.shouldShow('entry'), false);
 const requestedPath = new URLSearchParams(window.location.search).get('method');
 if (requestedPath === 'group' || requestedPath === 'sheet') selectPath(requestedPath);
 initializeDeadline();
