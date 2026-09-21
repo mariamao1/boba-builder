@@ -26,6 +26,22 @@
     <span>Loading group order…</span>
   </section>
 
+  <section class="status-board" id="status-board" aria-labelledby="status-board-title">
+    <div class="status-board-heading">
+      <div>
+        <p class="step-label">Order status</p>
+        <h2 id="status-board-title">Where’s the boba?</h2>
+      </div>
+      <p id="status-updated">Waiting for an update</p>
+    </div>
+    <ol class="status-steps" id="status-steps" aria-label="Order progress"></ol>
+    <div class="status-board-message" aria-live="polite">
+      <strong id="status-current">Collecting drinks</strong>
+      <span id="status-hint">The organizer has not placed the order yet.</span>
+      <p id="status-note" hidden></p>
+    </div>
+  </section>
+
   <section class="deadline-card" id="deadline-card" aria-labelledby="deadline-countdown">
     <div>
       <p class="step-label">Order deadline</p>

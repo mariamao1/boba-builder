@@ -116,6 +116,24 @@
       </form>
     </section>
 
+    <section class="card fulfillment-card" id="fulfillment-card" aria-labelledby="fulfillment-heading">
+      <div class="fulfillment-summary">
+        <p class="step-label">Pickup progress</p>
+        <h2 id="fulfillment-heading">Keep everyone posted</h2>
+        <p id="fulfillment-hint">The participant link shows this update automatically.</p>
+      </div>
+      <ol class="status-steps" id="fulfillment-steps" aria-label="Order progress"></ol>
+      <form class="fulfillment-form" id="fulfillment-form">
+        <label for="fulfillment-note">Update note <span class="muted">(optional)</span></label>
+        <textarea id="fulfillment-note" maxlength="280" rows="2"
+                  placeholder="Ready around 5:30pm, pickup counter B"></textarea>
+        <div class="fulfillment-buttons" id="fulfillment-buttons"
+             aria-label="Set order status"></div>
+        <div class="status" id="fulfillment-status" role="status" aria-live="polite"></div>
+      </form>
+      <div class="fulfillment-history" id="fulfillment-history"></div>
+    </section>
+
     <section class="summary-grid" aria-label="Running totals">
       <article class="summary-card"><strong id="drink-count">0</strong><span>Drinks</span></article>
       <article class="summary-card"><strong id="people-count">0</strong><span>People</span></article>

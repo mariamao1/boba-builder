@@ -20,6 +20,41 @@
 .room-strip.expired .status-dot, .room-strip.error .status-dot { background: var(--err); }
 .room-strip strong { color: var(--ink); }
 
+.status-board {
+  margin: 0 0 1rem; padding: 1rem; border: 1px solid var(--accent);
+  border-radius: 13px; background: var(--accent-soft);
+}
+.status-board-heading {
+  display: flex; align-items: end; justify-content: space-between; gap: 1rem;
+}
+.status-board-heading h2 { margin: 0; font-size: 1.12rem; }
+.status-board-heading > p { margin: 0; color: var(--muted); font-size: .75rem; }
+.status-steps {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: .85rem 0; padding: 0; list-style: none;
+}
+.status-steps li { position: relative; display: grid; justify-items: center; gap: .3rem; text-align: center; }
+.status-steps li:not(:last-child)::after {
+  content: ''; position: absolute; z-index: 0; top: .78rem; left: calc(50% + .8rem);
+  width: calc(100% - 1.6rem); height: 2px; background: var(--line);
+}
+.status-steps li.done::after { background: var(--ok); }
+.status-step-marker {
+  position: relative; z-index: 1; display: grid; place-items: center;
+  width: 1.6rem; height: 1.6rem; border: 2px solid var(--line); border-radius: 50%;
+  background: var(--card); color: var(--muted); font-size: .7rem; font-weight: 800;
+}
+.status-steps li.done .status-step-marker { border-color: var(--ok); background: var(--ok); color: #fff; }
+.status-steps li.current .status-step-marker { border-color: var(--accent); background: var(--accent); color: #fff; }
+.status-step-label { color: var(--muted); font-size: .7rem; line-height: 1.2; }
+.status-steps li.current .status-step-label { color: var(--ink); font-weight: 750; }
+.status-board-message { display: grid; gap: .1rem; }
+.status-board-message > span { color: var(--muted); font-size: .84rem; }
+.status-board-message > p {
+  margin: .45rem 0 0; padding: .5rem .65rem; border-radius: 8px;
+  background: var(--card); color: var(--ink); font-size: .84rem;
+}
+
 .deadline-card, .budget-card {
   display: flex; align-items: center; justify-content: space-between; gap: 1rem;
   margin: 0 0 1rem; padding: .9rem 1rem; border: 1px solid var(--accent);
@@ -275,6 +310,8 @@
   .participant-wrap { width: min(100% - 1rem, 720px); }
   .participant-head { padding: 1.15rem 0 1rem; }
   .room-strip { margin: .75rem 0; }
+  .status-board-heading { align-items: flex-start; flex-direction: column; gap: .15rem; }
+  .status-step-label { font-size: .62rem; }
   .deadline-card, .budget-card { align-items: flex-start; flex-direction: column; gap: .35rem; }
   .deadline-card p:last-child, .budget-card p:last-child { text-align: left; }
   .card { padding: 1rem .9rem; margin-bottom: .8rem; }

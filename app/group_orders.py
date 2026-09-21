@@ -39,6 +39,22 @@ MAX_QUANTITY = 20
 MAX_BUDGET_CAP = 1000
 POPULARITY_WINDOW_DAYS = 7
 POPULARITY_LIMIT = 5
+FULFILLMENT_HISTORY_LIMIT = 50
+
+FULFILLMENT_LABELS = {
+    "collecting": "Collecting drinks",
+    "ordered": "Ordered — with the store",
+    "ready": "Ready for pickup",
+    "picked_up": "Picked up",
+    "distributed": "Handed out",
+}
+FULFILLMENT_HINTS = {
+    "collecting": "Drinks are coming in; the organizer has not placed the order yet.",
+    "ordered": "The organizer placed and paid for the order with Kung Fu Tea.",
+    "ready": "Kung Fu Tea says the drinks are ready for pickup.",
+    "picked_up": "The drinks have been picked up and are on the way.",
+    "distributed": "The drinks have been handed out.",
+}
 
 ORDER_FIELDS = (
     "drink", "size", "sugar", "ice", "toppings", "milk", "temperature",
@@ -56,6 +72,7 @@ _STRING_LIMITS = {
     "temperature": 80,
     "notes": 500,
     "topping": 100,
+    "fulfillment_note": 280,
 }
 
 _locks_guard = threading.Lock()
@@ -432,6 +449,33 @@ def _summary(orders: list[dict]) -> dict:
     }
 
 
+def _fulfillment(room: dict) -> dict:
+    """Return the public delivery board, including defaults for older rooms."""
+    status = room.get("fulfillment_status")
+    if status not in FULFILLMENT_LABELS:
+        status = "collecting"
+    history = room.get("fulfillment_history")
+    if not isinstance(history, list):
+        history = []
+    public_history = []
+    for entry in history[-FULFILLMENT_HISTORY_LIMIT:]:
+        if not isinstance(entry, dict) or entry.get("status") not in FULFILLMENT_LABELS:
+            continue
+        public_history.append({
+            "status": entry["status"],
+            "at": entry.get("at"),
+            "note": str(entry.get("note") or "")[:_STRING_LIMITS["fulfillment_note"]],
+        })
+    return {
+        "status": status,
+        "label": FULFILLMENT_LABELS[status],
+        "hint": FULFILLMENT_HINTS[status],
+        "note": str(room.get("fulfillment_note") or ""),
+        "updated_at": room.get("fulfillment_updated_at"),
+        "history": public_history,
+    }
+
+
 def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
     current = _as_utc(now)
     status = _effective_status(room, current)
@@ -462,6 +506,7 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
         "expires_at": room["expires_at"],
         "locked_at": (deadline_at if lock_reason == "deadline" else room.get("locked_at")),
         "closed_at": room.get("closed_at"),
+        "fulfillment": _fulfillment(room),
         "orders": orders,
         "summary": _summary(orders),
         "costs": cost_summary,
@@ -491,7 +536,7 @@ def create(*, title: str = "", organizer_name: str = "",
     organizer_token = secrets.token_urlsafe(32)
     created_at = _timestamp(current)
     room = {
-        "version": 4,
+        "version": 5,
         "id": room_id,
         "title": title,
         "organizer_name": organizer_name,
@@ -508,6 +553,10 @@ def create(*, title: str = "", organizer_name: str = "",
         "deadline_updated_at": created_at,
         "locked_at": None,
         "closed_at": None,
+        "fulfillment_status": "collecting",
+        "fulfillment_note": "",
+        "fulfillment_updated_at": None,
+        "fulfillment_history": [],
         "organizer_token_hash": _secret_hash(organizer_token),
         "orders": [],
     }
@@ -722,6 +771,32 @@ def set_status(room_id: str, status: str, organizer_token: str | None, *,
             room["locked_at"] = None
         if status == "closed":
             room["closed_at"] = _timestamp(current)
+        _write(room)
+        return public_room(room, now=current)
+
+
+def set_fulfillment(room_id: str, status: str, organizer_token: str | None, *,
+                    note: str = "", now: dt.datetime | None = None) -> dict:
+    """Update the organizer-controlled order, pickup, and delivery board."""
+    current = _as_utc(now)
+    with _room_lock(room_id):
+        room = _read(room_id)
+        if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
+            raise Forbidden("the organizer token is missing or invalid")
+        if status not in FULFILLMENT_LABELS:
+            choices = ", ".join(FULFILLMENT_LABELS)
+            raise GroupOrderError(f"fulfillment status must be one of: {choices}")
+        note = _clean_string(note, "fulfillment_note")
+        timestamp = _timestamp(current)
+        history = room.get("fulfillment_history")
+        if not isinstance(history, list):
+            history = []
+        history.append({"status": status, "at": timestamp, "note": note})
+        room["fulfillment_status"] = status
+        room["fulfillment_note"] = note
+        room["fulfillment_updated_at"] = timestamp
+        room["fulfillment_history"] = history[-FULFILLMENT_HISTORY_LIMIT:]
+        room["updated_at"] = timestamp
         _write(room)
         return public_room(room, now=current)
 

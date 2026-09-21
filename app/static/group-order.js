@@ -12,6 +12,12 @@ const elements = {
   roomTitle: document.getElementById('room-title'),
   roomSubtitle: document.getElementById('room-subtitle'),
   roomStrip: document.getElementById('room-strip'),
+  statusBoard: document.getElementById('status-board'),
+  statusSteps: document.getElementById('status-steps'),
+  statusCurrent: document.getElementById('status-current'),
+  statusHint: document.getElementById('status-hint'),
+  statusNote: document.getElementById('status-note'),
+  statusUpdated: document.getElementById('status-updated'),
   deadlineCard: document.getElementById('deadline-card'),
   deadlineCountdown: document.getElementById('deadline-countdown'),
   deadlineDetail: document.getElementById('deadline-detail'),
@@ -146,6 +152,34 @@ function formatDeadline(timestamp) {
   }).format(value);
 }
 
+const FULFILLMENT_STAGES = [
+  ['collecting', 'Collecting'],
+  ['ordered', 'Ordered'],
+  ['ready', 'Ready'],
+  ['picked_up', 'Picked up'],
+  ['distributed', 'Handed out'],
+];
+
+function renderFulfillment() {
+  const board = session && session.fulfillment;
+  if (!board) return;
+  const active = Math.max(0, FULFILLMENT_STAGES.findIndex(([status]) => status === board.status));
+  elements.statusSteps.textContent = '';
+  FULFILLMENT_STAGES.forEach(([status, label], index) => {
+    const item = node('li', index < active ? 'done' : index === active ? 'current' : '');
+    if (index === active) item.setAttribute('aria-current', 'step');
+    item.append(node('span', 'status-step-marker', index < active ? '✓' : String(index + 1)));
+    item.append(node('span', 'status-step-label', label));
+    elements.statusSteps.append(item);
+  });
+  elements.statusCurrent.textContent = board.label || 'Collecting drinks';
+  elements.statusHint.textContent = board.hint || '';
+  elements.statusNote.hidden = !board.note;
+  elements.statusNote.textContent = board.note ? `Organizer note: ${board.note}` : '';
+  elements.statusUpdated.textContent = board.updated_at
+    ? `Updated ${formatDeadline(board.updated_at)}` : 'No pickup update yet';
+}
+
 function setSession(updated) {
   session = updated;
   const serverTime = new Date(updated.server_now).getTime();
@@ -240,6 +274,7 @@ function renderRoom() {
   if (!session.accepting_orders && editingOrderId) resetEditor();
   renderDeadline();
   renderBudget();
+  renderFulfillment();
 }
 
 function renderCategories() {
@@ -1066,6 +1101,7 @@ function showFatal(message) {
   elements.roomStrip.append(node('span', 'status-dot'));
   elements.roomStrip.append(node('strong', null, message));
   elements.orderCard.classList.add('hidden');
+  elements.statusBoard.classList.add('hidden');
   document.getElementById('group-orders-card').classList.add('hidden');
   elements.roomTitle.textContent = 'Group order unavailable';
   elements.roomSubtitle.textContent = 'Ask the organizer for a fresh link.';

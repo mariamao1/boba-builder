@@ -122,6 +122,28 @@
 .budget-form .status { margin: .15rem 0 0; }
 .person-group.over-budget .person-heading h3, .person-group.over-budget .person-total { color: var(--err); }
 
+.fulfillment-card { border-color: var(--accent); }
+.fulfillment-summary h2 { margin: 0; }
+.fulfillment-summary > p:last-child { margin: .3rem 0 0; color: var(--muted); font-size: .85rem; }
+.fulfillment-form { display: grid; gap: .55rem; }
+.fulfillment-form > label { font-size: .82rem; font-weight: 700; }
+.fulfillment-form textarea {
+  width: 100%; resize: vertical; min-height: 4.25rem; padding: .62rem .7rem;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+  color: var(--ink); font: inherit;
+}
+.fulfillment-form textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fulfillment-buttons { display: flex; flex-wrap: wrap; gap: .45rem; }
+.fulfillment-buttons .btn { font-size: .78rem; }
+.fulfillment-buttons .current { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); opacity: 1; }
+.fulfillment-form .status { margin: .1rem 0 0; }
+.fulfillment-history { margin-top: .8rem; padding-top: .75rem; border-top: 1px solid var(--line); }
+.fulfillment-history:empty { display: none; }
+.fulfillment-history > strong { font-size: .8rem; }
+.fulfillment-history ul { display: flex; flex-wrap: wrap; gap: .35rem .8rem; margin: .35rem 0 0; padding: 0; list-style: none; }
+.fulfillment-history li { display: grid; font-size: .78rem; }
+.fulfillment-history small { color: var(--muted); }
+
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(170px, 1.25fr); gap: .8rem; margin-bottom: 1rem; }
 .summary-card {
   display: flex; flex-direction: column; justify-content: center; min-height: 6.2rem; padding: 1rem 1.1rem;

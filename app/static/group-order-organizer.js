@@ -55,6 +55,14 @@ const elements = {
   saveBudget: document.getElementById('save-budget'),
   clearBudget: document.getElementById('clear-budget'),
   budgetStatus: document.getElementById('budget-status'),
+  fulfillmentCard: document.getElementById('fulfillment-card'),
+  fulfillmentSteps: document.getElementById('fulfillment-steps'),
+  fulfillmentHint: document.getElementById('fulfillment-hint'),
+  fulfillmentForm: document.getElementById('fulfillment-form'),
+  fulfillmentNote: document.getElementById('fulfillment-note'),
+  fulfillmentButtons: document.getElementById('fulfillment-buttons'),
+  fulfillmentStatus: document.getElementById('fulfillment-status'),
+  fulfillmentHistory: document.getElementById('fulfillment-history'),
   drinkCount: document.getElementById('drink-count'),
   peopleCount: document.getElementById('people-count'),
   lineCount: document.getElementById('line-count'),
@@ -173,6 +181,65 @@ function deadlineText(timestamp) {
   return new Intl.DateTimeFormat(undefined, {
     weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   }).format(date);
+}
+
+const FULFILLMENT_STAGES = [
+  ['collecting', 'Collecting drinks'],
+  ['ordered', 'Ordered'],
+  ['ready', 'Ready'],
+  ['picked_up', 'Picked up'],
+  ['distributed', 'Handed out'],
+];
+
+function fulfillmentTime(timestamp) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  }).format(date);
+}
+
+function renderFulfillment() {
+  if (!session || !session.fulfillment) return;
+  const board = session.fulfillment;
+  const active = Math.max(0, FULFILLMENT_STAGES.findIndex(([status]) => status === board.status));
+  elements.fulfillmentSteps.textContent = '';
+  elements.fulfillmentButtons.textContent = '';
+
+  FULFILLMENT_STAGES.forEach(([status, label], index) => {
+    const step = node('li', index < active ? 'done' : index === active ? 'current' : '');
+    if (index === active) step.setAttribute('aria-current', 'step');
+    step.append(node('span', 'status-step-marker', index < active ? '✓' : String(index + 1)));
+    step.append(node('span', 'status-step-label', label.replace(' drinks', '')));
+    elements.fulfillmentSteps.append(step);
+
+    const button = node('button', `btn compact${index === active ? ' current' : ''}`,
+      index === active ? `${label} · Current` : label);
+    button.type = 'button';
+    button.disabled = index === active;
+    button.addEventListener('click', () => updateFulfillment(status));
+    elements.fulfillmentButtons.append(button);
+  });
+
+  elements.fulfillmentHint.textContent = `${board.label}. ${board.hint}`;
+  if (document.activeElement !== elements.fulfillmentNote) {
+    elements.fulfillmentNote.value = board.note || '';
+  }
+
+  elements.fulfillmentHistory.textContent = '';
+  const history = (board.history || []).slice(-5);
+  if (history.length) {
+    elements.fulfillmentHistory.append(node('strong', null, 'Recent updates'));
+    const list = node('ul');
+    history.forEach((entry) => {
+      const label = (FULFILLMENT_STAGES.find(([status]) => status === entry.status) || [null, entry.status])[1];
+      const detail = [fulfillmentTime(entry.at), entry.note].filter(Boolean).join(' · ');
+      const item = node('li');
+      item.append(node('span', null, label), node('small', null, detail));
+      list.append(item);
+    });
+    elements.fulfillmentHistory.append(list);
+  }
 }
 
 function setSession(updated) {
@@ -519,7 +586,7 @@ function renderRoom() {
   elements.finalize.hidden = hasPreview;
   elements.continuePreview.hidden = !hasPreview;
   if (hasPreview) {
-    elements.finalizeCopy.textContent = 'This room is finalized. Continue to the existing cart review whenever you are ready.';
+    elements.finalizeCopy.textContent = 'This room is finalized. Continue to cart review; after paying at Kung Fu Tea, mark the status Ordered above.';
   } else {
     elements.finalize.disabled = !session.orders.length || session.status === 'expired';
     elements.finalizeCopy.textContent = session.status === 'closed'
@@ -667,6 +734,7 @@ function render() {
   renderRoom();
   renderDeadline(true);
   renderBudget(true);
+  renderFulfillment();
   renderOrders();
   renderDrinkTotals();
   renderCosts();
@@ -812,6 +880,29 @@ async function updateBudget(value) {
     setStatus(elements.budgetStatus, error.message, 'err');
   } finally {
     renderBudget(false);
+  }
+}
+
+async function updateFulfillment(status) {
+  if (!session || !session.fulfillment) return;
+  elements.fulfillmentButtons.querySelectorAll('button').forEach((button) => {
+    button.disabled = true;
+  });
+  setStatus(elements.fulfillmentStatus, 'Updating order status…', 'busy');
+  try {
+    const data = await request(`${apiBase}/fulfillment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fulfillment_status: status,
+        note: elements.fulfillmentNote.value.trim(),
+      }),
+    });
+    applyPublicSession(data.session);
+    setStatus(elements.fulfillmentStatus, `${data.session.fulfillment.label} is now visible to everyone.`, 'ok');
+  } catch (error) {
+    setStatus(elements.fulfillmentStatus, error.message, 'err');
+    renderFulfillment();
   }
 }
 

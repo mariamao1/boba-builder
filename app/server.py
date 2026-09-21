@@ -37,6 +37,7 @@ Routes
     PATCH/DELETE .../orders/<order_id>       manage an order with its edit token
     PATCH .../<room_id>/deadline             organizer changes the cutoff time
     PATCH .../<room_id>/budget               organizer sets the per-person cap
+    POST .../<room_id>/fulfillment           organizer updates pickup status
     POST .../<lock|reopen|close|finalize>     organizer lifecycle controls
     GET  /api/health
 
@@ -429,6 +430,10 @@ class Handler(BaseHTTPRequestHandler):
                 rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/finalize", path)
             if match:
                 return self._finalize_group_order(match.group(1))
+            match = re.fullmatch(
+                rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/fulfillment", path)
+            if match:
+                return self._set_group_order_fulfillment(match.group(1))
             match = re.fullmatch(r"/api/runs/([0-9a-f]+)/process", path)
             if match:
                 return self._process(match.group(1))
@@ -611,6 +616,22 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._read_json()
             room = group_orders.set_status(
                 room_id, status, self._organizer_token(payload))
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        except ValueError as exc:
+            return self._error(str(exc))
+        return self._json({"ok": True, "session": room},
+                          extra={"Cache-Control": "no-store"})
+
+    def _set_group_order_fulfillment(self, room_id: str):
+        try:
+            payload = self._read_json()
+            room = group_orders.set_fulfillment(
+                room_id,
+                payload.get("fulfillment_status"),
+                self._organizer_token(payload),
+                note=payload.get("note", ""),
+            )
         except group_orders.GroupOrderError as exc:
             return self._group_error(exc)
         except ValueError as exc:
