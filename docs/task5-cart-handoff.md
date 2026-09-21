@@ -61,3 +61,7 @@ total $7.29, handoff URL produced, and no token persisted.
 successfully on 2026-08-25. Chromium still cannot start in this environment, so
 the final browser clone remains verified from the storefront bundle and its
 server-side clone call, as documented in Task 1.
+
+Task 24 (`docs/task24-cart-verification.md`) extends that read-back into a
+full integrity check — modifiers, quantities, extras, and totals — rendered
+next to the handoff link before the organizer pays.

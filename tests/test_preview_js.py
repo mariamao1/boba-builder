@@ -540,5 +540,95 @@ report({
         self.assertEqual([entry["body"] for entry in seen["posted"]], [{"sugar": "30%"}])
 
 
+class CartCheckTests(PreviewScriptTest):
+    """Task 24: the read-back verification panel on the cart handoff view."""
+
+    editing = False
+
+    PANEL_REPORT = """
+var panel = null;
+nodes.body.walk(function (n) {
+  if (!panel && String(n.className).indexOf('cart-check') >= 0) panel = n;
+});
+report({found: !!panel, cls: panel && panel.className,
+        text: panel && panel.textContent});
+"""
+
+    def drive_cart(self, cart):
+        return self.drive("""
+var built = Object.assign({}, reply.run, {
+  handoff_url: 'https://kft.orderexperience.net/store/menu?order_id=source',
+  cart: %s,
+});
+render(built, reply.stages, true);
+""" % cart + self.PANEL_REPORT)
+
+    def test_a_passing_check_says_so(self):
+        seen = self.drive_cart("""{
+  status: 'ready', review_ready: true, warnings: [], failed: [], skipped: [],
+  store: {}, totals: {}, counts: {},
+  added: [{person: 'Alice', drink: 'Taro Slush', quantity: 1, options: []}],
+  verification: {status: 'matched', mismatches: [],
+    note: 'Cart check passed: all 1 drink is in the cart.'},
+}""")
+        self.assertTrue(seen["found"])
+        self.assertEqual(seen["cls"], "cart-check matched")
+        self.assertIn("Cart check", seen["text"])
+        self.assertIn("all 1 drink is in the cart", seen["text"])
+
+    def test_a_mismatch_names_the_drink_and_blocks_the_ready_headline(self):
+        seen = self.drive("""
+var built = Object.assign({}, reply.run, {
+  handoff_url: 'https://kft.orderexperience.net/store/menu?order_id=source',
+  cart: {
+    status: 'partial', review_ready: true, warnings: [], failed: [], skipped: [],
+    store: {}, totals: {}, counts: {},
+    added: [{person: 'Alice', drink: 'Taro Slush', quantity: 1, options: []}],
+    verification: {status: 'mismatched',
+      mismatches: [{kind: 'modifiers', row_number: 5, person: 'Alice',
+        drink: 'Taro Slush', quantity: 1,
+        detail: 'Alice \\u2014 1\\u00d7 Taro Slush: ordered Boba but the cart has no modifiers.'}],
+      note: 'Cart check found 1 difference (modifiers).'},
+  },
+});
+render(built, reply.stages, true);
+var panel = null;
+nodes.body.walk(function (n) {
+  if (!panel && String(n.className).indexOf('cart-check') >= 0) panel = n;
+});
+report({found: !!panel, cls: panel && panel.className,
+        text: panel && panel.textContent,
+        headline: !!byText('', 'Check the cart before you pay \\u2014 1 difference.'),
+        ready: !!byText('', 'Your Kung Fu Tea cart is ready to review.')});
+""")
+        self.assertTrue(seen["found"])
+        self.assertEqual(seen["cls"], "cart-check mismatched")
+        self.assertIn("fix before paying", seen["text"])
+        self.assertIn("ordered Boba", seen["text"])
+        self.assertTrue(seen["headline"])
+        self.assertFalse(seen["ready"])
+
+    def test_an_inconclusive_check_says_it_is_unconfirmed(self):
+        seen = self.drive_cart("""{
+  status: 'ready', review_ready: true, warnings: [], failed: [], skipped: [],
+  store: {}, totals: {}, counts: {},
+  added: [{person: 'Alice', drink: 'Taro Slush', quantity: 1, options: []}],
+  verification: {status: 'unverified', mismatches: [],
+    note: 'The cart contents could not be read back, so nothing here is confirmed.'},
+}""")
+        self.assertTrue(seen["found"])
+        self.assertEqual(seen["cls"], "cart-check unverified")
+        self.assertIn("not confirmed", seen["text"])
+        self.assertIn("nothing here is confirmed", seen["text"])
+
+    def test_a_cart_from_before_verification_has_no_panel(self):
+        seen = self.drive_cart("""{
+  status: 'ready', review_ready: true, warnings: [], failed: [], skipped: [],
+  store: {}, totals: {}, counts: {},
+  added: [{person: 'Alice', drink: 'Taro Slush', quantity: 1, options: []}],
+}""")
+        self.assertFalse(seen["found"])
+
+
 if __name__ == "__main__":
     unittest.main()

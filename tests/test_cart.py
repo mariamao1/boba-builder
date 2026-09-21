@@ -93,8 +93,19 @@ class FakeApi:
             raise kft_api.ApiError("This drink just sold out", status=400)
         source = next(item for item in self.items if item["id"] == item_id)
         result = {
-            "id": f"line-{len(self.added) + 1}", "name": source["name"],
+            # Live shape (verified 2026-09-21): `menuitem` is the menu drink,
+            # `id` the server line id, and each option carries its group and
+            # literal name. The read-back reports quantities as strings.
+            "id": f"line-{len(self.added) + 1}", "menuitem": item_id,
+            "name": source["name"],
             "quantity": kwargs["quantity"],
+            "options": [
+                {"group_name": group, "option_name": pick["name"],
+                 "quantity": pick.get("quantity", 1),
+                 "name": f"{group}: {pick['name']}"}
+                for group, picks in (kwargs.get("options") or {}).items()
+                for pick in picks
+            ],
             "total_price": round(source["display_price"] * kwargs["quantity"], 2),
         }
         self.added.append(result)
@@ -104,9 +115,10 @@ class FakeApi:
         return {}  # this is what the live endpoint currently returns
 
     def get_order(self, order_id, token):
-        subtotal = round(sum(item["total_price"] for item in self.added), 2)
+        items = [dict(item, quantity=str(item["quantity"])) for item in self.added]
+        subtotal = round(sum(item["total_price"] for item in items), 2)
         tax = round(subtotal * 0.08875, 2)
-        return {"id": order_id, "items": self.added, "subtotal": subtotal,
+        return {"id": order_id, "items": items, "subtotal": subtotal,
                 "tax": tax, "total_amount": round(subtotal + tax, 2)}
 
     @staticmethod
@@ -299,6 +311,100 @@ class CartBuildTests(unittest.TestCase):
         self.assertEqual(built["cart"]["failed"][0]["code"], "store_unavailable")
         self.assertNotIn("handoff_url", built)
         self.assertEqual(api.create_calls, 0)
+
+    def test_a_clean_build_records_a_passing_cart_check(self):
+        run = matched("Name,Drink,Size\nAlice,Taro Slush,Medium\n")
+        api = FakeApi([raw_item("Taro Slush")])
+
+        built = cart.build(run, api=api)
+
+        verification = built["cart"]["verification"]
+        self.assertEqual(verification["status"], "matched")
+        self.assertEqual(verification["mismatches"], [])
+        self.assertEqual(verification["source"], "source_order")
+        self.assertEqual(built["cart"]["status"], "ready")
+
+    def test_a_dropped_modifier_stays_in_the_cart_but_is_flagged(self):
+        run = matched(
+            "Name,Drink,Size,Sugar\n"
+            "Alice,Taro Slush,Large,50%\n"
+        )
+
+        class DroppedSugarApi(FakeApi):
+            def get_order(self, order_id, token):
+                order = super().get_order(order_id, token)
+                for item in order["items"]:
+                    item["options"] = [option for option in item["options"]
+                                       if option["group_name"] != "Sugar Level"]
+                return order
+
+        built = cart.build(run, api=DroppedSugarApi([raw_item("Taro Slush")]))
+
+        # Still reviewable — the drink IS in the cart — but not "ready".
+        self.assertEqual(built["cart"]["status"], "partial")
+        self.assertEqual([entry["person"] for entry in built["cart"]["added"]],
+                         ["Alice"])
+        verification = built["cart"]["verification"]
+        self.assertEqual(verification["status"], "mismatched")
+        (mismatch,) = verification["mismatches"]
+        self.assertEqual(mismatch["kind"], "modifiers")
+        self.assertEqual(mismatch["person"], "Alice")
+        self.assertIn("50%", mismatch["expected"])
+        self.assertTrue(any("difference" in warning
+                            for warning in built["cart"]["warnings"]))
+        self.assertIn("handoff_url", built)
+
+    def test_a_short_quantity_names_the_numbers(self):
+        run = matched("Name,Drink,Size,Qty\nAlice,Taro Slush,Medium,2\n")
+
+        class ShortQtyApi(FakeApi):
+            def get_order(self, order_id, token):
+                order = super().get_order(order_id, token)
+                order["items"][0]["quantity"] = "1"
+                return order
+
+        built = cart.build(run, api=ShortQtyApi([raw_item("Taro Slush")]))
+
+        kinds = [mismatch["kind"]
+                 for mismatch in built["cart"]["verification"]["mismatches"]]
+        self.assertIn("short_quantity", kinds)
+        self.assertEqual(built["cart"]["status"], "partial")
+
+    def test_an_extra_line_nobody_ordered_is_flagged(self):
+        run = matched("Name,Drink,Size\nAlice,Taro Slush,Medium\n")
+
+        class ExtraLineApi(FakeApi):
+            def get_order(self, order_id, token):
+                order = super().get_order(order_id, token)
+                order["items"].append({
+                    "id": "line-rogue", "menuitem": "mystery",
+                    "name": "Mystery Drink", "quantity": "1", "options": [],
+                    "total_price": 5.00,
+                })
+                return order
+
+        built = cart.build(run, api=ExtraLineApi([raw_item("Taro Slush")]))
+
+        kinds = [mismatch["kind"]
+                 for mismatch in built["cart"]["verification"]["mismatches"]]
+        self.assertIn("unexpected", kinds)
+        self.assertEqual(built["cart"]["status"], "partial")
+
+    def test_an_unreadable_cart_is_unverified_never_matched(self):
+        run = matched("Name,Drink,Size\nAlice,Taro Slush,Medium\n")
+
+        class NoReadbackApi(FakeApi):
+            def get_order(self, order_id, token):
+                raise kft_api.ApiError("cart service unavailable")
+
+        built = cart.build(run, api=NoReadbackApi([raw_item("Taro Slush")]))
+
+        verification = built["cart"]["verification"]
+        self.assertEqual(verification["status"], "unverified")
+        # The handoff is still useful, but nothing about it is confirmed.
+        self.assertIn("handoff_url", built)
+        self.assertTrue(any("unconfirmed" in warning
+                            for warning in built["cart"]["warnings"]))
 
     def test_a_completed_build_is_idempotent_for_the_same_rows(self):
         run = matched("Name,Drink,Size\nAlice,Taro Slush,Medium\n")

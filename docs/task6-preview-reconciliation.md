@@ -40,3 +40,9 @@ read-back. If an acknowledged line is missing, it moves from the placed manifest
 to the failure list instead of being presented as safe. The user then opens an
 editable clone on Kung Fu Tea, compares it with this summary, and performs the
 manual checkout there. Boba Builder never submits payment.
+
+Task 24 extends that check into a full integrity verification
+(`docs/task24-cart-verification.md`): wrong or dropped modifiers, short
+quantities, unexpected extras, and price drift are reported per drink in a
+cart-check panel next to the handoff link, and an unreadable read-back is
+shown as unconfirmed rather than passed.

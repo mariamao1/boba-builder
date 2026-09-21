@@ -17,7 +17,7 @@ import json
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import costs, matcher, menu as menu_module
+from . import costs, matcher, menu as menu_module, verify
 from scripts import kft_api
 
 ORDER_TYPE = "takeout"
@@ -397,7 +397,8 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
         counts["not_added_drinks"] = counts["failed_drinks"] + counts["skipped_drinks"]
 
     def finish(status: str, error: str | None = None, order_id: str | None = None,
-               added: list[dict] | None = None, order: dict | None = None) -> dict:
+               added: list[dict] | None = None, order: dict | None = None,
+               verification: dict | None = None) -> dict:
         manifest = added or []
         refresh_counts(manifest)
         cart = {
@@ -414,6 +415,8 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
             "warnings": warnings,
             "totals": _totals(order or {}),
         }
+        if verification is not None:
+            cart["verification"] = verification
         if error:
             cart["error"] = error
         result["cart"] = cart
@@ -489,33 +492,52 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
         order = {}
         warnings.append(f"The cart was built, but its totals could not be verified: {_message(exc)}")
 
-    # Reconcile successful add responses with the final server-side cart. An
-    # acknowledged line that is absent from the read-back must not be presented
-    # as placed; the user needs that discrepancy called out before checkout.
-    order_items = order.get("items") if isinstance(order, dict) else None
-    if isinstance(order_items, list):
-        confirmed_ids = {str(item.get("id")) for item in order_items if item.get("id")}
-        missing = [entry for entry in added_manifest
-                   if entry.get("cart_item_id")
-                   and str(entry["cart_item_id"]) not in confirmed_ids]
-        if missing:
-            missing_ids = {entry["cart_item_id"] for entry in missing}
-            added_manifest = [entry for entry in added_manifest
-                              if entry.get("cart_item_id") not in missing_ids]
-            for entry in missing:
-                failed.append({
-                    "row_number": entry["row_number"],
-                    "person": entry["person"],
-                    "drink": entry["drink"],
-                    "quantity": entry["quantity"],
-                    "code": "verification_failed",
-                    "reason": "the item was acknowledged but was missing from the final cart",
-                })
+    # Verify the acknowledged lines against the server-side read-back (Task 24).
+    # An acknowledged line that is absent from the read-back must not be
+    # presented as placed; subtler discrepancies (wrong modifiers, short
+    # quantities, extras, price drift) stay on their lines but are called out
+    # in the verification report, which the preview renders next to the
+    # handoff link — the moment before the organizer pays.
+    verification = verify.verify(added_manifest, order, order_id=order_id)
+    if verification["status"] == "unverified":
+        warnings.append(
+            "The cart contents could not be read back, so the manifest below "
+            "is unconfirmed. Compare it with the Kung Fu Tea cart before paying.")
+    else:
+        absent = {mismatch["cart_item_id"] for mismatch in verification["mismatches"]
+                  if mismatch["kind"] == "missing" and mismatch.get("absent")
+                  and mismatch.get("cart_item_id")}
+        if absent:
+            kept, added_manifest = added_manifest, []
+            for entry in kept:
+                if entry.get("cart_item_id") in absent:
+                    failed.append({
+                        "row_number": entry["row_number"],
+                        "person": entry["person"],
+                        "drink": entry["drink"],
+                        "quantity": entry["quantity"],
+                        "code": "verification_failed",
+                        "reason": "the item was acknowledged but was missing from the final cart",
+                    })
+                else:
+                    added_manifest.append(entry)
             warnings.append("The final cart did not contain every acknowledged item.")
+        remaining = [mismatch for mismatch in verification["mismatches"]
+                     if not (mismatch["kind"] == "missing" and mismatch.get("absent"))]
+        if remaining:
+            kinds = sorted({mismatch["kind"] for mismatch in remaining})
+            warnings.append(
+                f"Cart check found {len(remaining)} difference(s) "
+                f"({', '.join(kinds)}). Review them below before paying.")
 
     if not added_manifest:
         return finish("failed", "No drinks could be confirmed in the final cart.",
-                      order_id, order=order)
+                      order_id, order=order, verification=verification)
 
     status = "ready" if not failed else "partial"
-    return finish(status, order_id=order_id, added=added_manifest, order=order)
+    if verification["status"] == "mismatched" and status == "ready":
+        # Every line is present but something about them is wrong — still
+        # reviewable, but not something to call ready.
+        status = "partial"
+    return finish(status, order_id=order_id, added=added_manifest,
+                  order=order, verification=verification)

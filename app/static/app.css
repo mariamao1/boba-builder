@@ -389,6 +389,18 @@ input[type=url], input[type=text], input[type=search], input[type=datetime-local
   background: var(--warn-soft); color: var(--warn);
 }
 .store-alert.unavailable, .store-alert.paused { background: var(--err-soft); color: var(--err); }
+.cart-check {
+  margin: .8rem 0; padding: .65rem .75rem; border-radius: 8px;
+  background: var(--ok-soft);
+}
+.cart-check > h3 { margin: 0 0 .4rem; font-size: .95rem; }
+.cart-check.matched > h3 { color: var(--ok); }
+.cart-check.mismatched { background: var(--err-soft); }
+.cart-check.mismatched > h3 { color: var(--err); }
+.cart-check.unverified { background: var(--warn-soft); }
+.cart-check.unverified > h3 { color: var(--warn); }
+.cart-check .issues { margin: .4rem 0; }
+.cart-check > p:last-child { margin-bottom: 0; }
 .manifest { list-style: none; margin: .5rem 0 1rem; padding: 0; display: grid; gap: .45rem; }
 .manifest li {
   padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 9px;

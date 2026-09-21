@@ -72,6 +72,9 @@ Python 3.11+, standard library only — nothing to install.
       (`docs/task22-edit-window.md`)
 - [x] **Task 23** — first-time organizer hints for choosing a collection route
       and understanding the external cart checkout (`docs/task23-onboarding.md`)
+- [x] **Task 24** — cart integrity verification against the read-back,
+      with actionable mismatches and an honest unconfirmed state
+      (`docs/task24-cart-verification.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.

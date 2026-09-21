@@ -987,6 +987,40 @@ function cartReconciliation(cart) {
   return section;
 }
 
+/* Cart integrity check (Task 24): what the read-back actually contained,
+   compared against what the app intended to order. Rendered next to the
+   handoff link — the moment before the organizer pays — so a mismatch can
+   still be acted on. An inconclusive check is shown as exactly that, never
+   as a pass. */
+function cartVerification(cart) {
+  const verification = cart.verification;
+  if (!verification || !verification.status) return null;
+  const section = el('div', 'cart-check ' + verification.status);
+  if (verification.status === 'matched') {
+    section.append(el('h3', null, 'Cart check'));
+    section.append(el('p', 'muted',
+      verification.note || 'Everything ordered is in the cart.'));
+    return section;
+  }
+  if (verification.status === 'mismatched') {
+    const count = (verification.mismatches || []).length;
+    section.append(el('h3', null,
+      `Cart check — ${count} difference${count === 1 ? '' : 's'} to fix before paying`));
+    section.append(issueList((verification.mismatches || []).map((mismatch) => ({
+      level: (mismatch.kind === 'price' || mismatch.kind === 'totals') ? 'warning' : 'error',
+      row: mismatch.row_number || undefined,
+      message: mismatch.detail,
+    }))));
+    section.append(el('p', 'muted',
+      'Edit the rows and rebuild, or fix the differences directly in the editable Kung Fu Tea cart.'));
+    return section;
+  }
+  section.append(el('h3', null, 'Cart check — not confirmed'));
+  section.append(el('p', 'muted', verification.note
+    || 'The cart could not be read back. Compare the manifest with the Kung Fu Tea cart before paying.'));
+  return section;
+}
+
 function cartTotals(cart) {
   const totals = cart.totals || {};
   if (totals.subtotal == null && totals.tax == null && totals.total == null) return null;
@@ -1055,6 +1089,13 @@ function showCartResult(outcome, run) {
 
   if (!cart) {
     outcome.append(el('strong', null, 'Your cart is ready.'));
+  } else if (cart.status === 'failed') {
+    outcome.append(el('strong', null, 'The cart could not be made yet.'));
+    if (cart.error) outcome.append(el('p', null, cart.error));
+  } else if (cart.verification && cart.verification.status === 'mismatched') {
+    const count = (cart.verification.mismatches || []).length;
+    outcome.append(el('strong', null,
+      `Check the cart before you pay — ${count} difference${count === 1 ? '' : 's'}.`));
   } else if (cart.status === 'ready') {
     outcome.append(el('strong', null, 'Your Kung Fu Tea cart is ready to review.'));
   } else if (cart.status === 'partial') {
@@ -1073,6 +1114,8 @@ function showCartResult(outcome, run) {
 
   if (cart) {
     outcome.append(cartReconciliation(cart));
+    const check = cartVerification(cart);
+    if (check) outcome.append(check);
     outcome.append(cartManifest(cart));
     const pickup = pickupLabels(cart);
     if (pickup) outcome.append(pickup);
