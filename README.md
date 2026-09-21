@@ -65,6 +65,9 @@ Python 3.11+, standard library only — nothing to install.
 - [x] **Task 20** — organizer-set hard per-person budget caps with live
       selection feedback and grandfathered submitted drinks
       (`docs/task20-per-person-budget.md`)
+- [x] **Task 22** — participant edit window with per-order edit tokens,
+      locked/closed lifecycle, and organizer-visible edited markers
+      (`docs/task22-edit-window.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.

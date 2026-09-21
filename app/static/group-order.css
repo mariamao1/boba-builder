@@ -250,6 +250,11 @@
   background: var(--accent-soft); color: var(--accent); font-size: .68rem; text-transform: uppercase;
   letter-spacing: .04em;
 }
+.edited-badge {
+  display: inline-block; margin-left: .25rem; padding: .05rem .38rem; border-radius: 999px;
+  background: var(--brand-soft); color: var(--muted); font-size: .68rem; text-transform: uppercase;
+  letter-spacing: .04em;
+}
 .group-order-detail { margin: .2rem 0 0; color: var(--muted); font-size: .82rem; }
 .group-order-qty { color: var(--brand); font-weight: 750; white-space: nowrap; }
 .group-order-cost { display: grid; justify-items: end; align-content: start; gap: .15rem; color: var(--brand); font-variant-numeric: tabular-nums; }

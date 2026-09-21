@@ -897,6 +897,10 @@ function renderGroupOrders() {
       person.append(document.createTextNode(' '));
       person.append(node('span', 'yours-badge', 'Yours'));
     }
+    if (order.updated_at && order.created_at && order.updated_at !== order.created_at) {
+      person.append(document.createTextNode(' '));
+      person.append(node('span', 'edited-badge', 'Edited'));
+    }
     copy.append(person);
     copy.append(node('h3', null, order.drink));
     copy.append(node('p', 'group-order-detail', orderDetails(order)));

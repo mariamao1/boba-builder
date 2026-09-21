@@ -583,7 +583,12 @@ function renderOrders() {
       }
       line.append(title, node('p', 'group-order-detail', orderDetails(order)));
       const added = timeText(order.created_at);
-      line.append(node('span', 'line-meta', added ? `Added ${added}` : 'Submitted order'));
+      const editedAt = order.updated_at && order.updated_at !== order.created_at
+        ? timeText(order.updated_at) : '';
+      const meta = added
+        ? (editedAt ? `Added ${added} · Edited ${editedAt}` : `Added ${added}`)
+        : (editedAt ? `Edited ${editedAt}` : 'Submitted order');
+      line.append(node('span', 'line-meta', meta));
       const remove = node('button', 'text-button remove-line', 'Remove');
       remove.type = 'button';
       remove.disabled = !canModerate();
