@@ -363,7 +363,8 @@ class MenuGroup:
     """One option group on one item, with the axis it belongs to."""
 
     __slots__ = ("item_name", "group_name", "axis", "required", "min", "max",
-                 "multiselect", "allows_quantity", "options", "_canonical")
+                 "multiselect", "allows_quantity", "options", "disabled",
+                 "_canonical")
 
     def __init__(self, item_name: str, data: dict, config: mapping.Mapping):
         self.item_name = item_name
@@ -378,6 +379,11 @@ class MenuGroup:
         self.allows_quantity = bool(data.get("allows_quantity"))
         self.options = [option for option in data.get("options") or []
                         if not option.get("is_disabled")]
+        # Kept, not offered: a disabled option is sold out right now, not
+        # something this drink never takes. The matcher needs the distinction
+        # so "Boba (sold out)" is not misreported as "doesn't take Boba".
+        self.disabled = [option for option in data.get("options") or []
+                         if option.get("is_disabled")]
         self._canonical = data.get("canonical")
 
     @property
@@ -418,6 +424,36 @@ class MenuGroup:
             if literal == option_name:
                 return label
         return option_name
+
+    def disabled_label(self, label: str) -> str | None:
+        """A store-level label -> its disabled literal, or None.
+
+        Mirrors the matching half of `MenuItem.literal` (size suffixes
+        stripped, sugar compared by percentage) but over the options the
+        store just turned off, so callers can tell "sold out right now"
+        from "this drink never takes that".
+        """
+        if not label:
+            return None
+        if self.axis == "sugar":
+            wanted = re.search(r"(\d+)", str(label))
+            if not wanted:
+                return None
+            for option in self.disabled:
+                found = re.search(r"(\d+)\s*%", option["name"])
+                if found and found.group(1) == wanted.group(1):
+                    return option["name"]
+            return None
+        key = norm(label)
+        for option in self.disabled:
+            if norm(option["name"]) == key:
+                return option["name"]
+        for option in self.disabled:
+            candidate = size_label(option["name"], option.get("price")) \
+                if self.axis == "size" else option["name"]
+            if norm(candidate) == key:
+                return option["name"]
+        return None
 
     def default(self, prefer: list[str] | None = None) -> dict | None:
         """What to send when this group is required and nobody chose anything.
@@ -523,6 +559,21 @@ class MenuItem:
                 found = re.search(r"(\d+)\s*%", option["name"])
                 if found and found.group(1) == percent:
                     return group, option
+        return None
+
+    def unavailable(self, axis: str, label: str) -> str | None:
+        """A label this item just turned off -> its disabled literal, or None.
+
+        The selection-time and cart-build checks use this before reporting a
+        modifier as not offered: a hit here means "sold out right now" with
+        the remaining `labels()`/`options()` as the re-choose list.
+        """
+        if not label:
+            return None
+        for group in self.groups_for(axis):
+            literal = group.disabled_label(label)
+            if literal is not None:
+                return literal
         return None
 
     def sugar_levels(self) -> list[int]:

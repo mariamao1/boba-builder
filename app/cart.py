@@ -168,12 +168,60 @@ def _skip_reason(row: dict) -> str:
     return "no menu drink was selected" if status == matcher.NEEDS_DRINK else "the row is not orderable"
 
 
-def _unfulfilled(row: dict) -> set[tuple[str, str]]:
+def _unfulfilled(row: dict) -> set[tuple[str, str, bool]]:
     found = row.get("match") or {}
     return {
-        (entry.get("axis") or "option", entry.get("asked") or "requested choice")
+        (entry.get("axis") or "option", entry.get("asked") or "requested choice",
+         bool(entry.get("sold_out")))
         for key in ("unmapped", "dropped")
         for entry in found.get(key) or []
+    }
+
+
+def _availability_summary(failed: list[dict]) -> dict:
+    """Cluster failed rows by sold-out cause so one outage reads as one line.
+
+    One popular topping selling out can fail a dozen rows at once; the
+    per-row entries still name each affected person, but this summary lets
+    the organizer see the single cause without counting. Only rows the
+    pre-add checks positively identified carry a cause — a rejection at
+    add time keeps its server message verbatim instead of a guessed cause.
+    """
+    drinks: dict[str, dict] = {}
+    options: dict[tuple[str, str], dict] = {}
+    for entry in failed:
+        cause = entry.get("cause") or {}
+        person = entry.get("person") or "Unlabelled"
+        number = entry.get("row_number")
+        quantity = int(entry.get("quantity") or 1)
+        if cause.get("kind") == "sold_out_drink":
+            bucket = drinks.setdefault(cause.get("drink") or entry["drink"], {
+                "drink": cause.get("drink") or entry["drink"],
+                "rows": [], "people": [], "drinks": 0,
+            })
+            bucket["rows"].append(number)
+            if person not in bucket["people"]:
+                bucket["people"].append(person)
+            bucket["drinks"] += quantity
+        elif cause.get("kind") in ("sold_out_option", "changed_option"):
+            for option in cause.get("options") or []:
+                key = (option.get("axis") or "option",
+                       option.get("asked") or "requested choice")
+                bucket = options.setdefault(key, {
+                    "axis": key[0], "asked": key[1], "rows": [],
+                    "people": [], "drinks": 0, "sold_out": False,
+                })
+                bucket["rows"].append(number)
+                if person not in bucket["people"]:
+                    bucket["people"].append(person)
+                bucket["drinks"] += quantity
+                bucket["sold_out"] = bucket["sold_out"] or (
+                    cause.get("kind") == "sold_out_option")
+    return {
+        "sold_out_drinks": sorted(
+            drinks.values(), key=lambda e: (-e["drinks"], e["drink"])),
+        "sold_out_options": sorted(
+            options.values(), key=lambda e: (-e["drinks"], e["asked"])),
     }
 
 
@@ -265,6 +313,7 @@ def _prebuild_failure(matched: dict, error: str, code: str, *,
         "added": [],
         "failed": failed,
         "skipped": skipped,
+        "availability": _availability_summary(failed),
         "warnings": warnings or [],
         "totals": _totals({}),
     }
@@ -347,11 +396,30 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
             if ((old_row.get("match") or {}).get("status") == matcher.READY
                     and newly_missing):
                 entry = _row_stub(row)
-                choices = ", ".join(asked for _axis, asked in sorted(newly_missing))
-                entry.update({
-                    "code": "menu_changed",
-                    "reason": f"the live menu no longer supports {choices}",
-                })
+                ordered = sorted(newly_missing)
+                choices = ", ".join(asked for _axis, asked, _sold in ordered)
+                just_sold_out = any(sold for _axis, _asked, sold in ordered)
+                if just_sold_out:
+                    entry.update({
+                        "code": "sold_out",
+                        "reason": f"{choices} just sold out — re-choose "
+                                  f"or remove this line and rebuild",
+                        "cause": {
+                            "kind": "sold_out_option",
+                            "options": [{"axis": axis, "asked": asked}
+                                        for axis, asked, sold in ordered if sold],
+                        },
+                    })
+                else:
+                    entry.update({
+                        "code": "menu_changed",
+                        "reason": f"the live menu no longer supports {choices}",
+                        "cause": {
+                            "kind": "changed_option",
+                            "options": [{"axis": axis, "asked": asked}
+                                        for axis, asked, _sold in ordered],
+                        },
+                    })
                 failed.append(entry)
                 continue
             eligible.append(row)
@@ -366,6 +434,9 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
             unavailable = unavailable or live_store.unorderable(old_item.get("name"))
             entry["code"] = ("sold_out" if unavailable and unavailable.sold_out
                              else "unavailable" if unavailable else "menu_changed")
+            if unavailable is not None:
+                entry["cause"] = {"kind": "sold_out_drink",
+                                  "drink": unavailable.name}
             failed.append(entry)
         else:
             entry["code"] = "not_mapped"
@@ -412,6 +483,9 @@ def build(matched: dict, api=None, now: _dt.datetime | None = None) -> dict:
             "added": manifest,
             "failed": failed,
             "skipped": skipped,
+            # Clustered sold-out causes across the failed rows, so one popular
+            # outage reads as one line. Empty when nothing sold out.
+            "availability": _availability_summary(failed),
             "warnings": warnings,
             "totals": _totals(order or {}),
         }

@@ -23,7 +23,7 @@ import threading
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
-from . import costs, importer, matcher, menu, runs
+from . import costs, importer, matcher, menu, options, runs
 
 SESSION_DIR = Path(os.environ.get(
     "BOBA_GROUP_ORDER_DIR",
@@ -129,6 +129,17 @@ class EmptyRoom(RoomNotOpen):
 class BudgetExceeded(GroupOrderError):
     status = 409
     code = "budget_exceeded"
+
+
+class OrderUnavailable(GroupOrderError):
+    """A drink or modifier the captured menu already knows can't be fulfilled."""
+
+    status = 409
+    code = "unavailable"
+
+
+class SoldOut(OrderUnavailable):
+    code = "sold_out"
 
 
 def _utcnow() -> dt.datetime:
@@ -432,6 +443,100 @@ def _enforce_budget(room: dict, candidate_orders: list[dict], *,
             f"${cap_cents / 100:.2f} per-person limit")
 
 
+def _offered(item, axis: str) -> list[str]:
+    names = item.options(axis) if axis == "toppings" else item.labels(axis)
+    if len(names) > 4:
+        return names[:4] + [f"{len(names) - 4} more"]
+    return names
+
+
+def _payload_fields(payload: dict) -> set[str]:
+    """Field names an order write actually carries, mirroring _order_values."""
+    if not isinstance(payload, dict):
+        return set()
+    nested = payload.get("order")
+    if isinstance(nested, dict):
+        fields = set(nested)
+        if "person" in payload:
+            fields.add("person")
+        return fields
+    return set(payload) - {"order"}
+
+
+def _canonical_labels(values: dict, option_set) -> dict[str, str]:
+    """Submitted modifier words -> the store-level labels the menu understands."""
+    return {
+        "size": option_set.size(
+            values.get("size", ""), values.get("temperature", "")).value,
+        "sugar": option_set.sugar(values.get("sugar", "")).value,
+        "ice": option_set.ice_level(values.get("ice", "")).value,
+        "milk": option_set.milk_option(values.get("milk", "")).value,
+    }
+
+
+def _check_availability(room: dict, values: dict, *,
+                        axes: tuple[str, ...] | None = None) -> None:
+    """Reject a submission the captured menu already knows is unavailable.
+
+    The selection-time half of availability (Task 25): the participant is
+    here right now and can re-choose instantly, so a positively-identified
+    sold-out drink or modifier is a 409 naming alternatives — not a silent
+    finalize-time drop. Only what the menu positively identifies is
+    rejected; unknown names still pass. Nothing here touches lines already
+    in the room: availability that changes after submitting is re-checked
+    at cart-build time instead, so notes-only edits on a drink that sold
+    out since are never blocked.
+    """
+    restaurant_id = room.get("restaurant_id") or menu.TARGET_STORE
+    store = menu.store_menu(restaurant_id)
+    if not store:
+        return
+    drink = values.get("drink") or ""
+    found = store.find(drink)
+    if not found:
+        if axes is not None and "drink" not in axes:
+            return
+        gone = store.unorderable(drink)
+        if gone is None:
+            return
+        if gone.sold_out:
+            suggestions = store.suggestions(drink)
+            hint = (f" — try {', '.join(suggestions[:2])} instead"
+                    if suggestions else "")
+            raise SoldOut(f'"{gone.name}" is sold out right now{hint}')
+        raise OrderUnavailable(
+            f'"{gone.name}" isn\'t something this group order can include')
+    item = found.item
+    wanted = ("size", "sugar", "ice", "milk", "toppings") if axes is None else axes
+    if not wanted:
+        return
+    option_set = options.store_options(restaurant_id)
+    labels = _canonical_labels(values, option_set)
+    for axis in wanted:
+        if axis == "toppings":
+            candidates: list[str] = []
+            for raw in values.get("toppings") or []:
+                canonical = option_set.topping(raw).value
+                if canonical and canonical not in candidates:
+                    candidates.append(canonical)
+                if raw not in candidates:
+                    candidates.append(raw)
+        elif axis in labels:
+            candidates = [labels[axis], values.get(axis, "")]
+        else:
+            continue
+        for asked in candidates:
+            if not asked:
+                continue
+            if item.unavailable(axis, asked) is None:
+                continue
+            offered = _offered(item, axis)
+            still = (f" — {item.name} still does {', '.join(offered)}"
+                     if offered else "")
+            raise SoldOut(
+                f'"{asked}" is sold out for {item.name} right now{still}')
+
+
 def _summary(orders: list[dict]) -> dict:
     people: dict[str, dict] = {}
     for order in orders:
@@ -616,6 +721,7 @@ def add_order(room_id: str, payload: dict, *, now: dt.datetime | None = None
         _require_open(room, current)
         if len(room.get("orders") or []) >= MAX_ORDERS:
             raise RoomFull(f"this group order has reached its {MAX_ORDERS}-order limit")
+        _check_availability(room, values)
         edit_token = secrets.token_urlsafe(24)
         order = {
             "id": secrets.token_urlsafe(15),
@@ -657,6 +763,22 @@ def update_order(room_id: str, order_id: str, payload: dict, *,
         if not _can_manage_order(room, order, order_token, organizer_token):
             raise Forbidden("the order edit token is missing or invalid")
         values = _order_values(payload, current=order)
+        # Only what this edit newly asks for is checked: a drink that sold
+        # out after it was submitted stays put (cart-build flags it), while
+        # a newly picked sold-out drink or modifier is rejected with
+        # alternatives. A new drink re-checks every modifier with it.
+        fields = _payload_fields(payload)
+        if "drink" in fields:
+            _check_availability(room, values)
+        else:
+            axes = []
+            if "size" in fields or "temperature" in fields:
+                axes.append("size")
+            for axis in ("sugar", "ice", "milk", "toppings"):
+                if axis in fields:
+                    axes.append(axis)
+            if axes:
+                _check_availability(room, values, axes=tuple(axes))
         organizer_can_manage = _matches_secret(
             organizer_token, room.get("organizer_token_hash"))
         if not organizer_can_manage:

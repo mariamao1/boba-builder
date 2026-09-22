@@ -1070,8 +1070,34 @@ async function submitOrder(event) {
   } catch (error) {
     setFormStatus(error.message, 'err');
     if (error.code === 'deadline_passed' || error.code === 'budget_exceeded') refreshSession(false);
+    if (error.code === 'sold_out' || error.code === 'unavailable') {
+      // Availability changed since this page loaded: the picker is stale.
+      // The message above already names alternatives; reload the menu so
+      // the sold-out choice stops being offered.
+      refreshSession(false);
+      refreshMenu();
+    }
   } finally {
     elements.submit.disabled = budgetBlocked;
+  }
+}
+
+async function refreshMenu() {
+  if (!session) return;
+  try {
+    const menuData = await request(
+      `/api/menu?restaurant_id=${encodeURIComponent(session.restaurant_id)}`);
+    if (!menuData.menu || menuData.menu.restaurant_id !== session.restaurant_id) return;
+    menu = menuData.menu;
+    if (selectedItem && !menu.items.some((item) => item.name === selectedItem.name)) {
+      resetEditor({ keepStatus: true });
+    }
+    renderCategories();
+    renderDrinkList();
+    renderFavorites();
+    renderPopularPicks();
+  } catch (_error) {
+    // Keep the current picker; the server message already names alternatives.
   }
 }
 

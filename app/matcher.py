@@ -81,6 +81,7 @@ class Chosen:
     DEFAULTED = "defaulted"    # nobody asked; the group is required so we picked
     IS_DEFAULT = "is_default"  # asked for, and it's the recipe — send nothing
     NOT_HERE = "not_here"      # this item doesn't offer it
+    SOLD_OUT = "sold_out"      # this item did offer it; the store turned it off
     NO_GROUP = "no_group"      # this item has no such axis at all
 
     def __init__(self, axis: str, group=None, option: dict | None = None,
@@ -118,7 +119,8 @@ class Chosen:
 #: How loudly to say each thing. Nothing the matcher finds is an error: the
 #: import decided long ago which rows are unorderable, and a modifier this store
 #: can't do is a drink somebody still gets.
-_LEVEL = {Chosen.NOT_HERE: "warning", Chosen.NO_GROUP: "info",
+_LEVEL = {Chosen.NOT_HERE: "warning", Chosen.SOLD_OUT: "warning",
+          Chosen.NO_GROUP: "info",
           Chosen.IS_DEFAULT: "info", Chosen.DEFAULTED: "info"}
 
 #: "<drink> <this> — it's <what it has>". One per axis because "doesn't come in
@@ -190,6 +192,32 @@ class RowMatcher:
 
             offered = item.labels(axis)
             phrase = _NOT_HERE.get(axis, "doesn't take {label}").format(label=label)
+            if item.unavailable(axis, label) is not None:
+                # The store turned this off after the snapshot's vocabulary
+                # was learned: say sold out, not "doesn't take", and offer
+                # what is still orderable as the re-choose list.
+                fallback = self._fallback(required, axis)
+                if fallback:
+                    group, option = fallback
+                    instead = group.label_for(option["name"])
+                    rest = [name for name in offered if name != instead]
+                    message = (f"{item.name} is out of {label} right now — ordered "
+                               f"{instead} for now") if not rest else (
+                        f"{item.name} is out of {label} right now — ordered {instead} "
+                        f"for now; it still does {_join(rest, 'or')}")
+                    return Chosen(axis, group, option, status=Chosen.SOLD_OUT,
+                                  choices=offered, asked=label, message=message)
+                if self._is_the_recipe(axis, label):
+                    return Chosen(axis, status=Chosen.IS_DEFAULT,
+                                  message=f"{label.lower()} is how {item.name} comes — "
+                                          f"no {_axis_word(axis)} sent")
+                rest = _join(offered, 'or')
+                message = (f"{label} is sold out for {item.name} right now — "
+                           f"ordered without it") if not offered else (
+                    f"{label} is sold out for {item.name} right now — ordered "
+                    f"without it for now; it still does {rest}")
+                return Chosen(axis, status=Chosen.SOLD_OUT, choices=offered,
+                              asked=label, message=message)
             fallback = self._fallback(required, axis)
             if fallback:
                 # The group is required, so "send nothing" isn't on the table —
@@ -244,6 +272,15 @@ class RowMatcher:
         for name in wanted:
             found = item.literal("toppings", name)
             if not found:
+                if item.unavailable("toppings", name) is not None:
+                    rest = [option for option in offered if option != name]
+                    message = (f"{name} is sold out for {item.name} right now — "
+                               f"ordered without it") if not rest else (
+                        f"{name} is sold out for {item.name} right now — ordered "
+                        f"without it for now; it still does {_join(rest, 'or')}")
+                    chosen.append(Chosen("toppings", status=Chosen.SOLD_OUT,
+                                         choices=offered, asked=name, message=message))
+                    continue
                 chosen.append(Chosen("toppings", status=Chosen.NOT_HERE, choices=offered,
                                      asked=name,
                                      message=f"{item.name} doesn't take {name}"
@@ -308,7 +345,10 @@ class RowMatcher:
             if message:
                 issues.append(Issue("warning", message, "drink", number,
                                     f"{PREFIX}no-item"))
-            return {"status": NEEDS_DRINK, "choices": {"drink": offer}}, issues
+            return {"status": NEEDS_DRINK, "choices": {"drink": offer},
+                    "sold_out": gone.name if gone is not None and gone.sold_out else None,
+                    "unavailable": gone.name if gone is not None and not gone.sold_out else None,
+                    }, issues
 
         canonical = row.get("canonical") or {}
         picks = [self.choose(item, "size", canonical.get("size") or ""),
@@ -331,8 +371,10 @@ class RowMatcher:
         # Two different bad outcomes, and the page shows them differently: one
         # is a decision waiting to be made, the other is a request this drink
         # simply can't take, with nothing to choose between.
-        unmapped = [{"axis": pick.axis, "asked": pick.asked, "why": pick.message}
-                    for pick in picks if pick.status == Chosen.NOT_HERE]
+        unmapped = [{"axis": pick.axis, "asked": pick.asked, "why": pick.message,
+                       "sold_out": pick.status == Chosen.SOLD_OUT}
+                    for pick in picks
+                    if pick.status in (Chosen.NOT_HERE, Chosen.SOLD_OUT)]
         dropped = [{"axis": pick.axis, "asked": pick.asked, "why": pick.message}
                    for pick in picks if pick.status == Chosen.NO_GROUP and pick.asked]
         choices = {pick.axis: pick.choices for pick in picks if pick.choices}
@@ -383,6 +425,73 @@ def _axis_word(axis: str) -> str:
 
 
 # --- the pipeline stage ------------------------------------------------------
+
+
+def _availability(rows: list[dict]) -> tuple[dict, list[dict]]:
+    """Cluster sold-out causes so one popular outage reads as one line.
+
+    A topping running out touches many rows at once; the per-row warnings
+    still name each affected drink, but the run also gets one summary entry
+    per cause plus a single warning issue when a cause hits two or more
+    rows. Pure: derived from the rows, re-derived on every match.
+    """
+    drinks: dict[str, dict] = {}
+    options: dict[tuple[str, str], dict] = {}
+    for row in rows:
+        found = row.get("match") or {}
+        person = row.get("person") or "Unlabelled"
+        number = row.get("row_number")
+        quantity = int(found.get("quantity") or row.get("quantity") or 1)
+        if found.get("status") == NEEDS_DRINK and found.get("sold_out"):
+            entry = drinks.setdefault(found["sold_out"], {
+                "drink": found["sold_out"], "rows": [], "people": [],
+                "drinks": 0,
+            })
+            entry["rows"].append(number)
+            if person not in entry["people"]:
+                entry["people"].append(person)
+            entry["drinks"] += quantity
+            continue
+        if found.get("status") != READY:
+            continue
+        for entry_data in found.get("unmapped") or []:
+            if not entry_data.get("sold_out"):
+                continue
+            key = (entry_data.get("axis") or "option",
+                   entry_data.get("asked") or "requested choice")
+            entry = options.setdefault(key, {
+                "axis": key[0], "asked": key[1], "rows": [], "people": [],
+                "drinks": 0,
+            })
+            entry["rows"].append(number)
+            if person not in entry["people"]:
+                entry["people"].append(person)
+            entry["drinks"] += quantity
+
+    summary = {
+        "sold_out_drinks": sorted(drinks.values(), key=lambda e: (-e["drinks"], e["drink"])),
+        "sold_out_options": sorted(options.values(), key=lambda e: (-e["drinks"], e["asked"])),
+    }
+    clustered: list[dict] = []
+    for entry in summary["sold_out_drinks"]:
+        if len(entry["rows"]) < 2:
+            continue
+        clustered.append(Issue(
+            "warning",
+            f"{entry['drink']} is sold out — {len(entry['rows'])} rows "
+            f"({', '.join(entry['people'][:3])}"
+            f"{' and more' if len(entry['people']) > 3 else ''}) need a new pick "
+            f"before the cart can include them",
+            "drink", None, f"{PREFIX}sold-out-drink").as_dict())
+    for entry in summary["sold_out_options"]:
+        if len(entry["rows"]) < 2:
+            continue
+        clustered.append(Issue(
+            "warning",
+            f"{entry['asked']} is sold out on {len(entry['rows'])} drinks — those "
+            f"lines are ordered without it for now",
+            entry["axis"], None, f"{PREFIX}sold-out-option").as_dict())
+    return summary, clustered
 
 
 def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
@@ -467,6 +576,9 @@ def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
                     f"scripts/fetch_menu.py if the cart starts rejecting options",
             None, None, f"{PREFIX}stale-menu").as_dict())
 
+    availability, clustered = _availability(rows)
+    issues += clustered
+
     result["rows"] = rows
     result["issues"] = issues
     result["match"] = {
@@ -483,6 +595,10 @@ def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
         "needs_attention": attention,
         "drinks": drinks,
         "subtotal": round(subtotal, 2),
+        # Clustered sold-out causes, so one popular outage reads as one line.
+        # Empty when nothing is sold out; always present so readers need no
+        # version check.
+        "availability": availability,
     }
     cart = result.get("cart") or {}
     result["costs"] = (costs.from_cart(cart) if cart.get("review_ready")

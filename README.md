@@ -75,6 +75,9 @@ Python 3.11+, standard library only — nothing to install.
 - [x] **Task 24** — cart integrity verification against the read-back,
       with actionable mismatches and an honest unconfirmed state
       (`docs/task24-cart-verification.md`)
+- [x] **Task 25** — sold-out & availability detection at selection and
+      cart-build time, with alternatives, re-choose, and clustered
+      outage summaries (`docs/task25-availability.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.
