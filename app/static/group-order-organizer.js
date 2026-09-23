@@ -55,6 +55,17 @@ const elements = {
   saveBudget: document.getElementById('save-budget'),
   clearBudget: document.getElementById('clear-budget'),
   budgetStatus: document.getElementById('budget-status'),
+  payerManager: document.getElementById('payer-manager'),
+  payerCurrent: document.getElementById('payer-current'),
+  payerDetail: document.getElementById('payer-detail'),
+  payerForm: document.getElementById('payer-form'),
+  payerNames: document.getElementById('payer-names'),
+  payerMode: document.getElementById('payer-mode'),
+  payerPaidBy: document.getElementById('payer-paid-by'),
+  payerAssignments: document.getElementById('payer-assignments'),
+  savePayers: document.getElementById('save-payers'),
+  clearPayers: document.getElementById('clear-payers'),
+  payerStatus: document.getElementById('payer-status'),
   fulfillmentCard: document.getElementById('fulfillment-card'),
   fulfillmentSteps: document.getElementById('fulfillment-steps'),
   fulfillmentHint: document.getElementById('fulfillment-hint'),
@@ -345,6 +356,96 @@ function renderBudget(syncInput) {
   elements.budgetInput.disabled = closed;
   elements.saveBudget.disabled = closed;
   elements.clearBudget.disabled = closed || !hasCap;
+}
+
+function payerNamesFromInput() {
+  return elements.payerNames.value.split(/[\n,]/)
+    .map((name) => name.replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
+
+function selectOption(value, label) {
+  const option = node('option', null, label);
+  option.value = value;
+  return option;
+}
+
+function renderPayerFields(payerNames, mode, paidBy, assignments) {
+  elements.payerPaidBy.textContent = '';
+  if (!payerNames.length) {
+    elements.payerPaidBy.append(selectOption('', 'Add payer names first'));
+  } else {
+    payerNames.forEach((payer) => {
+      const option = selectOption(payer, payer);
+      option.selected = normalized(payer) === normalized(paidBy || payerNames[0]);
+      elements.payerPaidBy.append(option);
+    });
+  }
+
+  elements.payerAssignments.textContent = '';
+  if (!payerNames.length) {
+    elements.payerAssignments.append(node('p', 'muted',
+      'Add two or more names to make a payer settlement.'));
+    return;
+  }
+  if (mode === 'even') {
+    elements.payerAssignments.append(node('p', 'muted',
+      'The final total is divided evenly across the listed payers.'));
+    return;
+  }
+
+  const people = ((session.summary || {}).by_person || []);
+  if (!people.length) {
+    elements.payerAssignments.append(node('p', 'muted',
+      'Participant assignments will appear as drinks are submitted.'));
+    return;
+  }
+  elements.payerAssignments.append(node('strong', null, 'Participant assignments'));
+  people.forEach((person) => {
+    const row = node('label', 'payer-assignment');
+    row.append(node('span', null, person.person));
+    const select = node('select');
+    select.dataset.payerPerson = normalized(person.person);
+    const assigned = (assignments || {})[normalized(person.person)] || payerNames[0];
+    payerNames.forEach((payer) => {
+      const option = selectOption(payer, payer);
+      option.selected = normalized(payer) === normalized(assigned);
+      select.append(option);
+    });
+    row.append(select);
+    elements.payerAssignments.append(row);
+  });
+}
+
+function renderPayers(syncInput) {
+  if (!session) return;
+  const config = session.payers || {payers: [], mode: 'assigned', assignments: {}, paid_by: null};
+  const payerNames = config.payers || [];
+  const enabled = payerNames.length > 0;
+  elements.payerCurrent.textContent = enabled
+    ? `${plural(payerNames.length, 'payer')} · ${config.mode === 'even' ? 'even split' : 'by assignment'}`
+    : 'One person covers checkout';
+  elements.payerDetail.textContent = enabled
+    ? `${config.paid_by || payerNames[0]} pays at checkout; the dashboard calculates reimbursements.`
+    : 'Add payer names to calculate who should cover each share.';
+
+  const active = document.activeElement;
+  const editing = active === elements.payerNames || active === elements.payerMode
+    || active === elements.payerPaidBy || (active && active.dataset && active.dataset.payerPerson);
+  if (syncInput && !editing) {
+    elements.payerNames.value = payerNames.join(', ');
+    elements.payerMode.value = config.mode || 'assigned';
+    renderPayerFields(
+      payerNames, config.mode || 'assigned', config.paid_by, config.assignments || {});
+  }
+  const closed = session.status === 'closed';
+  elements.payerNames.disabled = closed;
+  elements.payerMode.disabled = closed || !enabled;
+  elements.payerPaidBy.disabled = closed || !enabled;
+  elements.payerAssignments.querySelectorAll('select').forEach((select) => {
+    select.disabled = closed;
+  });
+  elements.savePayers.disabled = closed;
+  elements.clearPayers.disabled = closed || !enabled;
 }
 
 function tickDeadline() {
@@ -672,9 +773,49 @@ function renderOrders() {
 function costShareText() {
   const costs = session && session.costs;
   if (!costs || !costs.by_person || !costs.by_person.length) return '';
-  return [session.title, ...costs.by_person.map((entry) => `${entry.person}: ${money(entry.total)}`),
+  const split = costs.payer_split;
+  if (split) {
+    const settlement = split.settlement.length
+      ? ['Settle up:', ...split.settlement.map((entry) =>
+        `${entry.from} pays ${entry.to}: ${money(entry.amount)}`)]
+      : ['No reimbursement is due yet.'];
+    return [session.title, 'Payer shares:',
+      ...split.payers.map((entry) => `${entry.payer}: ${money(entry.total)}`),
+      `Group total: ${money(split.total)}`, `Checkout: ${split.paid_by}`,
+      ...settlement].join('\n');
+  }
+  return [session.title,
+    ...costs.by_person.map((entry) => `${entry.person}: ${money(entry.total)}`),
     `Group total: ${money(costs.total)}`,
     costs.estimated ? 'Estimate before tax, tip, and fees.' : 'Shared costs split proportionally.'].join('\n');
+}
+
+function payerSplitBlock(split) {
+  const block = node('div', 'payer-split-block');
+  block.append(node('strong', null, split.mode === 'even'
+    ? 'Payer shares · even split' : 'Payer shares · assigned people'));
+  const list = node('ul', 'cost-split-list');
+  split.payers.forEach((entry) => {
+    const item = node('li');
+    const label = node('span');
+    const people = entry.people.length ? entry.people.join(', ') : 'Even share';
+    label.append(document.createTextNode(entry.payer), node('small', 'payer-people', people));
+    item.append(label, node('strong', null, money(entry.total)));
+    list.append(item);
+  });
+  block.append(list);
+  const settlement = node('div', 'settlement-list');
+  settlement.append(node('strong', null, `${split.paid_by} pays at checkout`));
+  if (split.settlement.length) {
+    split.settlement.forEach((entry) => {
+      settlement.append(node('p', null,
+        `${entry.from} reimburses ${entry.to} ${money(entry.amount)}`));
+    });
+  } else {
+    settlement.append(node('p', 'muted', 'No reimbursement is due yet.'));
+  }
+  block.append(settlement);
+  return block;
 }
 
 function renderCosts() {
@@ -696,7 +837,9 @@ function renderCosts() {
   const total = node('div', 'cost-group-total');
   total.append(node('span', null, costs.estimated ? 'Estimated group total' : 'Group total'),
     node('strong', null, money(costs.total)));
-  elements.costBreakdown.append(list, total);
+  elements.costBreakdown.append(list);
+  if (costs.payer_split) elements.costBreakdown.append(payerSplitBlock(costs.payer_split));
+  elements.costBreakdown.append(total);
   elements.copyCosts.disabled = false;
   const missing = Number(costs.unpriced_drinks || 0);
   elements.costNote.textContent = missing
@@ -734,6 +877,7 @@ function render() {
   renderRoom();
   renderDeadline(true);
   renderBudget(true);
+  renderPayers(true);
   renderFulfillment();
   renderOrders();
   renderDrinkTotals();
@@ -883,6 +1027,45 @@ async function updateBudget(value) {
   }
 }
 
+async function updatePayers(clear) {
+  const payerNames = clear ? [] : payerNamesFromInput();
+  const mode = elements.payerMode.value === 'even' ? 'even' : 'assigned';
+  const assignments = {};
+  if (!clear && mode === 'assigned') {
+    elements.payerAssignments.querySelectorAll('[data-payer-person]').forEach((select) => {
+      if (select.value) assignments[select.dataset.payerPerson] = select.value;
+    });
+  }
+  const available = new Map(payerNames.map((name) => [normalized(name), name]));
+  const selectedCheckout = available.get(normalized(elements.payerPaidBy.value));
+  const payload = {
+    payers: payerNames,
+    mode,
+    assignments,
+    paid_by: selectedCheckout || payerNames[0] || null,
+  };
+
+  elements.savePayers.disabled = true;
+  elements.clearPayers.disabled = true;
+  setStatus(elements.payerStatus,
+    payerNames.length ? 'Saving payer split…' : 'Returning to one payer…', 'busy');
+  try {
+    const data = await request(`${apiBase}/payers`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    applyPublicSession(data.session);
+    setStatus(elements.payerStatus, payerNames.length
+      ? 'Payer shares and settlement instructions updated.'
+      : 'Multiple-payer split removed.', 'ok');
+  } catch (error) {
+    setStatus(elements.payerStatus, error.message, 'err');
+  } finally {
+    renderPayers(false);
+  }
+}
+
 async function updateFulfillment(status) {
   if (!session || !session.fulfillment) return;
   elements.fulfillmentButtons.querySelectorAll('button').forEach((button) => {
@@ -995,6 +1178,24 @@ elements.budgetInput.addEventListener('blur', () => {
   }
 });
 elements.clearBudget.addEventListener('click', () => updateBudget(null));
+elements.payerForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  updatePayers(false);
+});
+elements.payerNames.addEventListener('input', () => {
+  const payerNames = payerNamesFromInput();
+  const config = session.payers || {};
+  renderPayerFields(payerNames, elements.payerMode.value,
+    elements.payerPaidBy.value, config.assignments || {});
+  elements.payerMode.disabled = !payerNames.length;
+  elements.payerPaidBy.disabled = !payerNames.length;
+});
+elements.payerMode.addEventListener('change', () => {
+  const config = session.payers || {};
+  renderPayerFields(payerNamesFromInput(), elements.payerMode.value,
+    elements.payerPaidBy.value, config.assignments || {});
+});
+elements.clearPayers.addEventListener('click', () => updatePayers(true));
 elements.finalize.addEventListener('click', finalizeOrder);
 elements.continuePreview.addEventListener('click', () => {
   if (session && session.preview_url) window.location.assign(session.preview_url);

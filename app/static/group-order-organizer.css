@@ -122,6 +122,36 @@
 .budget-form .status { margin: .15rem 0 0; }
 .person-group.over-budget .person-heading h3, .person-group.over-budget .person-total { color: var(--err); }
 
+.payer-manager {
+  display: grid; grid-template-columns: minmax(220px, .8fr) minmax(320px, 1.2fr);
+  gap: 1.4rem; align-items: start; border-color: var(--accent);
+}
+.payer-summary h2 { margin: 0; color: var(--brand); font-size: 1.5rem; }
+.payer-summary > p:last-child { margin: .35rem 0 0; color: var(--muted); font-size: .85rem; }
+.payer-form { display: grid; gap: .55rem; }
+.payer-form > label, .payer-options label { font-size: .82rem; font-weight: 700; }
+.payer-form textarea, .payer-options select, .payer-assignment select {
+  width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); color: var(--ink); padding: .62rem .7rem; font: inherit;
+}
+.payer-form textarea { resize: vertical; }
+.payer-form textarea:focus-visible, .payer-form select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.payer-options { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .4rem .65rem; align-items: center; }
+.payer-assignments { display: grid; gap: .4rem; }
+.payer-assignments > strong { font-size: .8rem; }
+.payer-assignment { display: grid; grid-template-columns: minmax(0, 1fr) minmax(9rem, .75fr); gap: .6rem; align-items: center; }
+.payer-assignment span { overflow-wrap: anywhere; font-size: .82rem; }
+.payer-help { margin: 0; color: var(--muted); font-size: .76rem; }
+.payer-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; }
+.payer-form .status { margin: .1rem 0 0; }
+.payer-split-block { margin-top: .8rem; padding-top: .7rem; border-top: 1px solid var(--line); }
+.payer-split-block > strong, .settlement-list > strong { font-size: .8rem; }
+.payer-people { color: var(--muted); font-size: .72rem; }
+.settlement-list { margin-top: .65rem; }
+.settlement-list p { margin: .3rem 0 0; font-size: .78rem; }
+
 .fulfillment-card { border-color: var(--accent); }
 .fulfillment-summary h2 { margin: 0; }
 .fulfillment-summary > p:last-child { margin: .3rem 0 0; color: var(--muted); font-size: .85rem; }
@@ -204,6 +234,7 @@
   .qr-invite { justify-self: start; }
   .deadline-manager { grid-template-columns: 1fr; gap: .9rem; }
   .budget-manager { grid-template-columns: 1fr; gap: .9rem; }
+  .payer-manager { grid-template-columns: 1fr; gap: .9rem; }
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .organizer-layout { grid-template-columns: 1fr; }
   .organizer-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); position: static; }
@@ -218,6 +249,7 @@
   .qr-code-large { width: min(72vw, 430px); height: min(72vw, 430px); }
   .deadline-input-row { grid-template-columns: 1fr; }
   .budget-input-row { grid-template-columns: 1fr; }
+  .payer-options, .payer-assignment { grid-template-columns: 1fr; }
   .session-actions { width: 100%; }
   .organizer-section-heading > .muted { max-width: none; text-align: left; }
   .summary-grid { gap: .55rem; }

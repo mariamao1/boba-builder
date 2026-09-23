@@ -162,9 +162,9 @@ def _base_run(run: dict) -> dict:
 def _public(order: dict, *, detail: bool) -> dict:
     keys = (
         "id", "label", "order_date", "saved_at", "source", "store", "counts",
-        "totals", "status", "source_run_id",
+        "totals", "status", "source_run_id", "payers",
     )
-    result = {key: copy.deepcopy(order.get(key)) for key in keys}
+    result = {key: copy.deepcopy(order.get(key)) for key in keys if key in order}
     if detail:
         cost_summary = copy.deepcopy(order.get("costs") or {})
         if not cost_summary and order.get("items"):
@@ -172,6 +172,8 @@ def _public(order: dict, *, detail: bool) -> dict:
                 "added": order.get("items") or [],
                 "totals": order.get("totals") or {},
             })
+        if order.get("payers") and "payer_split" not in cost_summary:
+            costs.attach_payers(cost_summary, order["payers"])
         result.update({
             "items": copy.deepcopy(order.get("items") or []),
             "failed": copy.deepcopy(order.get("failed") or []),
@@ -182,7 +184,7 @@ def _public(order: dict, *, detail: bool) -> dict:
 
 
 def save_finished(run: dict, owner_token: str | None, label, order_date=None,
-                  tip=None, total_paid=None,
+                  tip=None, total_paid=None, payers=None,
                   *, now: dt.datetime | None = None) -> dict:
     owner = _owner_hash(owner_token)
     cart = run.get("cart") or {}
@@ -200,7 +202,15 @@ def save_finished(run: dict, owner_token: str | None, label, order_date=None,
                      for key in ("failed", "skipped") for item in cart.get(key) or [])
     tip = _clean_money(tip, "tip")
     total_paid = _clean_money(total_paid, "final amount paid")
-    cost_summary = costs.from_cart(cart, tip=tip, total_paid=total_paid)
+    raw_payers = payers
+    if raw_payers is None:
+        raw_payers = (run.get("source") or {}).get("payers")
+    try:
+        payer_config = costs.normalize_payer_config(raw_payers)
+    except ValueError as exc:
+        raise SavedOrderError(str(exc)) from exc
+    cost_summary = costs.attach_payers(
+        costs.from_cart(cart, tip=tip, total_paid=total_paid), payer_config)
     final_totals = copy.deepcopy(cart.get("totals") or {})
     if tip is not None:
         final_totals["tip"] = tip
@@ -229,6 +239,8 @@ def save_finished(run: dict, owner_token: str | None, label, order_date=None,
         "skipped": copy.deepcopy(cart.get("skipped") or []),
         "snapshot": _base_run(run),
     }
+    if payer_config["payers"]:
+        record["payers"] = payer_config
 
     # Saving the same completed run twice updates its label/date instead of
     # creating indistinguishable archive entries after a double click.
@@ -284,6 +296,8 @@ def repeat(order_id: str, owner_token: str | None) -> str:
         "restaurant_id": saved_source.get("restaurant_id"),
         "store": saved_source.get("store"),
     }
+    if saved.get("payers"):
+        payload["source"]["payers"] = copy.deepcopy(saved["payers"])
     return runs.save(payload)
 
 

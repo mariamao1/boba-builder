@@ -184,6 +184,29 @@ class GroupOrderStoreTests(unittest.TestCase):
         with self.assertRaises(group_orders.EmptyRoom):
             group_orders.finalize(room["id"], organizer_token)
 
+    def test_payer_configuration_is_applied_and_carried_to_the_run(self):
+        room, organizer_token = group_orders.create(title="Two teams")
+        group_orders.add_order(room["id"], ORDER)
+        group_orders.add_order(room["id"], {
+            **ORDER, "person": "Bob", "drink": "Matcha Milk", "toppings": [],
+        })
+
+        updated = group_orders.set_payers(room["id"], {
+            "payers": ["Design", "Engineering"],
+            "assignments": {"Alice": "Design", "Bob": "Engineering"},
+            "paid_by": "Design",
+        }, organizer_token)
+        payer_split = updated["costs"]["payer_split"]
+        self.assertEqual(payer_split["paid_by"], "Design")
+        self.assertAlmostEqual(
+            sum(entry["total"] for entry in payer_split["payers"]),
+            updated["costs"]["total"],
+        )
+
+        _finalized, run_id = group_orders.finalize(room["id"], organizer_token)
+        self.assertEqual(runs.load(run_id)["source"]["payers"]["payers"],
+                         ["Design", "Engineering"])
+
     def test_organizer_switches_from_menu_estimate_to_built_cart_total(self):
         room, organizer_token = group_orders.create()
         group_orders.add_order(room["id"], ORDER)

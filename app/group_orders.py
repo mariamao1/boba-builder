@@ -591,6 +591,8 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
         lock_reason = "deadline" if deadline_passed else "manual"
     restaurant_id = room.get("restaurant_id") or menu.TARGET_STORE
     orders, cost_summary = _price_orders(room.get("orders") or [], restaurant_id)
+    payer_config = costs.normalize_payer_config(room.get("payers"))
+    costs.attach_payers(cost_summary, payer_config)
     store = menu.store_summary(restaurant_id)
     return {
         "id": room["id"],
@@ -599,6 +601,7 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
         "restaurant_id": restaurant_id,
         "store_name": room.get("store_name") or ((store or {}).get("name")),
         "budget_cap": room.get("budget_cap"),
+        "payers": payer_config,
         "status": status,
         "accepting_orders": status == "open",
         "lock_reason": lock_reason,
@@ -641,7 +644,7 @@ def create(*, title: str = "", organizer_name: str = "",
     organizer_token = secrets.token_urlsafe(32)
     created_at = _timestamp(current)
     room = {
-        "version": 5,
+        "version": 6,
         "id": room_id,
         "title": title,
         "organizer_name": organizer_name,
@@ -691,7 +694,8 @@ def get_for_organizer(room_id: str, organizer_token: str | None, *,
             f"/preview/{run_id}" if finalized_run is not None else None)
         cart = (finalized_run or {}).get("cart") or {}
         if cart.get("review_ready"):
-            result["costs"] = costs.from_cart(cart)
+            result["costs"] = costs.attach_payers(
+                costs.from_cart(cart), result["payers"])
             for line in cart.get("added") or []:
                 index = int(line.get("row_number") or 0) - 2
                 if 0 <= index < len(result["orders"]):
@@ -859,6 +863,9 @@ def finalize(room_id: str, organizer_token: str | None, *,
             "budget_cap": room.get("budget_cap"),
             "finalized_at": finalized_at,
         }
+        payer_config = costs.normalize_payer_config(room.get("payers"))
+        if payer_config["payers"]:
+            result.source["payers"] = payer_config
         run_id = runs.new_id()
         runs.save(result.as_dict(), run_id)
 
@@ -893,6 +900,25 @@ def set_status(room_id: str, status: str, organizer_token: str | None, *,
             room["locked_at"] = None
         if status == "closed":
             room["closed_at"] = _timestamp(current)
+        _write(room)
+        return public_room(room, now=current)
+
+
+def set_payers(room_id: str, payer_config, organizer_token: str | None, *,
+               now: dt.datetime | None = None) -> dict:
+    """Set the payer layer used for estimates and post-checkout settlement."""
+    current = _as_utc(now)
+    with _room_lock(room_id):
+        room = _read(room_id)
+        if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
+            raise Forbidden("the organizer token is missing or invalid")
+        if _effective_status(room, current) == "closed":
+            raise RoomNotOpen("a closed group order cannot change its payers")
+        try:
+            room["payers"] = costs.normalize_payer_config(payer_config)
+        except ValueError as exc:
+            raise GroupOrderError(str(exc)) from exc
+        room["updated_at"] = _timestamp(current)
         _write(room)
         return public_room(room, now=current)
 

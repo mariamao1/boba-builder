@@ -601,8 +601,10 @@ def match(run: dict, store: menu_module.StoreMenu | None = None) -> dict:
         "availability": availability,
     }
     cart = result.get("cart") or {}
-    result["costs"] = (costs.from_cart(cart) if cart.get("review_ready")
-                       else costs.from_rows(rows))
+    payer_config = (result.get("source") or {}).get("payers")
+    result["costs"] = (costs.from_cart(cart, payers=payer_config)
+                       if cart.get("review_ready")
+                       else costs.from_rows(rows, payers=payer_config))
     return result
 
 

@@ -18,6 +18,19 @@ const plural = (count, one, many) => `${count} ${count === 1 ? one : many || one
 
 function costShareText(order) {
   const costs = order.costs || {};
+  const split = costs.payer_split;
+  if (split) {
+    const lines = [order.label, 'Payer shares:', ...split.payers.map((entry) =>
+      `${entry.payer}: ${money(entry.total)}`), `Group total: ${money(split.total)}`,
+    `Checkout: ${split.paid_by}`];
+    if (split.settlement.length) {
+      lines.push('Settle up:', ...split.settlement.map((entry) =>
+        `${entry.from} pays ${entry.to}: ${money(entry.amount)}`));
+    } else {
+      lines.push('No reimbursement is due.');
+    }
+    return lines.join('\n');
+  }
   return [order.label, ...(costs.by_person || []).map((entry) =>
     `${entry.person}: ${money(entry.total)}`), `Group total: ${money(costs.total)}`,
   'Shared costs split proportionally by drink subtotal.'].join('\n');
@@ -56,6 +69,25 @@ function costBlock(order) {
   section.append(heading, list, total,
     el('p', 'muted cost-breakdown-note',
       'Tax, tip, fees, discounts, and other cart-wide adjustments are split proportionally.'));
+  if (costs.payer_split) {
+    const split = costs.payer_split;
+    const payers = el('div', 'cost-breakdown-payers');
+    payers.append(el('h4', null,
+      split.mode === 'even' ? 'Payer shares · even split' : 'Payer shares · assigned people'));
+    const payerList = el('ul', 'cost-breakdown-list');
+    split.payers.forEach((entry) => {
+      const item = el('li');
+      const label = el('span');
+      label.append(el('strong', null, entry.payer), el('small', null,
+        entry.people.length ? entry.people.join(', ') : 'Even share'));
+      item.append(label, el('strong', 'payer-owed', money(entry.total)));
+      payerList.append(item);
+    });
+    payers.append(payerList, el('strong', 'checkout-payer', `${split.paid_by} paid at checkout`));
+    (split.settlement || []).forEach((entry) => payers.append(el('p', 'settlement-line',
+      `${entry.from} reimburses ${entry.to} ${money(entry.amount)}`)));
+    section.append(payers);
+  }
   return section;
 }
 

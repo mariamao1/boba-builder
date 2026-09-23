@@ -116,6 +116,37 @@
       </form>
     </section>
 
+    <section class="card payer-manager" id="payer-manager" aria-labelledby="payer-heading">
+      <div class="payer-summary">
+        <p class="step-label">Multiple payers</p>
+        <h2 id="payer-heading"><span id="payer-current">One person covers checkout</span></h2>
+        <p id="payer-detail">Add payer names to calculate who should cover each share.</p>
+      </div>
+      <form class="payer-form" id="payer-form">
+        <label for="payer-names">Payer names <span class="muted">(comma or new line separated)</span></label>
+        <textarea id="payer-names" rows="2" maxlength="1640"
+                  placeholder="Alice, Bob"></textarea>
+        <div class="payer-options">
+          <label for="payer-mode">How to split</label>
+          <select id="payer-mode">
+            <option value="assigned">Assign each person to a payer</option>
+            <option value="even">Split the total evenly</option>
+          </select>
+          <label for="payer-paid-by">Pays at checkout</label>
+          <select id="payer-paid-by" disabled>
+            <option value="">Add payer names first</option>
+          </select>
+        </div>
+        <div class="payer-assignments" id="payer-assignments"></div>
+        <p class="payer-help">The store still receives one payment. Other payer shares become reimbursement instructions after checkout.</p>
+        <div class="payer-actions">
+          <button class="btn primary compact" id="save-payers" type="submit">Save payer split</button>
+          <button class="text-button" id="clear-payers" type="button">Use one payer</button>
+        </div>
+        <div class="status" id="payer-status" role="status" aria-live="polite"></div>
+      </form>
+    </section>
+
     <section class="card fulfillment-card" id="fulfillment-card" aria-labelledby="fulfillment-heading">
       <div class="fulfillment-summary">
         <p class="step-label">Pickup progress</p>

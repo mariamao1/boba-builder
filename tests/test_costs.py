@@ -46,6 +46,51 @@ class CostBreakdownTests(unittest.TestCase):
         self.assertEqual(split["total"], 0.0)
         self.assertEqual(split["by_person"], [])
 
+    def test_assigned_payers_inherit_each_persons_complete_share(self):
+        base = costs.breakdown([
+            {"person": "Alice", "quantity": 1, "amount": 10},
+            {"person": "Bob", "quantity": 1, "amount": 20},
+            {"person": "Cara", "quantity": 1, "amount": 5},
+        ], totals={"tax": 3.5, "total": 38.5})
+        split = costs.payer_split(base, {
+            "payers": ["Alice", "Bob"],
+            "assignments": {"Bob": "Bob", "Cara": "Bob"},
+            "paid_by": "Alice",
+        })
+
+        self.assertEqual([entry["total"] for entry in split["payers"]], [11.0, 27.5])
+        self.assertEqual(split["payers"][1]["people"], ["Bob", "Cara"])
+        self.assertEqual(split["settlement"], [
+            {"from": "Bob", "to": "Alice", "amount": 27.5},
+        ])
+
+    def test_even_payer_split_reconciles_odd_cents(self):
+        base = costs.breakdown([
+            {"person": "Alice", "quantity": 1, "amount": 10},
+        ], totals={"total": 10})
+        split = costs.payer_split(base, {
+            "payers": ["A", "B", "C"], "mode": "even",
+        })
+
+        self.assertEqual([entry["total"] for entry in split["payers"]],
+                         [3.34, 3.33, 3.33])
+        self.assertEqual(sum(entry["total"] for entry in split["payers"]), 10.0)
+
+    def test_payer_names_and_assignments_are_normalized(self):
+        config = costs.normalize_payer_config({
+            "payers": [" Alice ", "Bob"],
+            "assignments": {" BOB ": " bob "},
+            "paid_by": " alice ",
+        })
+        self.assertEqual(config, {
+            "payers": ["Alice", "Bob"],
+            "mode": "assigned",
+            "assignments": {"bob": "Bob"},
+            "paid_by": "Alice",
+        })
+        with self.assertRaises(ValueError):
+            costs.normalize_payer_config({"payers": ["Alice", "alice"]})
+
 
 if __name__ == "__main__":
     unittest.main()
