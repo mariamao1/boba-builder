@@ -47,7 +47,7 @@
     <div class="entry-heading">
       <p class="choice-kicker">Start here</p>
       <h2 id="start-h">How do you want to collect orders?</h2>
-      <p>Both options lead to the same review, reconciliation, and cart handoff.</p>
+      <p>All three options lead to the same review, reconciliation, and cart handoff.</p>
     </div>
 
     <aside class="onboarding-callout" id="entry-onboarding" aria-labelledby="entry-onboarding-title" hidden>
@@ -58,7 +58,7 @@
           <li><a href="/?method=group" data-onboarding-method="group"><strong>Nothing collected yet?</strong> Start a group link. Everyone uses the live menu to enter and update their own drinks.<span class="onboarding-choice-action">Start a group link <span aria-hidden="true">→</span></span></a></li>
           <li><a href="/?method=sheet" data-onboarding-method="sheet"><strong>Already have a list?</strong> Import the spreadsheet you have. You’ll check the rows before anything reaches a cart.<span class="onboarding-choice-action">Import a spreadsheet <span aria-hidden="true">→</span></span></a></li>
         </ul>
-        <p><strong>Both routes end the same way:</strong> Boba Builder prepares one cart, then you open Kung Fu Tea to review and pay.</p>
+        <p><strong>All three routes end the same way:</strong> Boba Builder prepares one cart, then you open Kung Fu Tea to review and pay.</p>
       </div>
       <button class="btn onboarding-dismiss" id="dismiss-entry-onboarding" type="button">Got it</button>
     </aside>
@@ -80,6 +80,14 @@
         <strong>Import a spreadsheet</strong>
         <span>Upload a CSV or Excel file, or paste a shared Google Sheets link.</span>
         <span class="path-action">Import a sheet <span aria-hidden="true">→</span></span>
+      </button>
+
+      <button class="path-card" id="choose-solo" type="button"
+              aria-controls="solo-path" aria-expanded="false">
+        <span class="path-kicker">Just for you</span>
+        <strong>Order a drink for yourself</strong>
+        <span>Reorder a saved usual in one tap — no install, no account.</span>
+        <span class="path-action">Start a solo order <span aria-hidden="true">→</span></span>
       </button>
     </div>
   </section>
@@ -260,6 +268,23 @@
       </div>
 
       <div id="status" class="status" role="status" aria-live="polite"></div>
+    </section>
+  </div>
+
+  <div class="flow-panel" id="solo-path" hidden>
+    <section class="card solo-start-card" aria-labelledby="solo-h">
+      <div class="flow-heading">
+        <div>
+          <p class="choice-kicker">Solo order</p>
+          <h2 id="solo-h">Just the one drink</h2>
+        </div>
+        <p>Built around your saved usuals: each one keeps its full set of modifiers, so a
+          reorder is one tap — faster than rebuilding the drink in the Kung Fu Tea app, with
+          no install and no account. Anything new uses the same live menu as the group flow.</p>
+      </div>
+      <p><a class="btn primary" href="/solo">Start a solo order</a></p>
+      <p class="flow-note">Your usuals live in this browser only. The last step still hands you a
+        normal Kung Fu Tea cart link — you check it and pay in your own browser.</p>
     </section>
   </div>
 

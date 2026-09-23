@@ -32,20 +32,22 @@ $('show-entry-onboarding').addEventListener('click', () => {
 /* --- collection path ---------------------------------------------------- */
 
 function selectPath(which) {
-  const isGroup = which === 'group';
-  $('group-path').hidden = !isGroup;
-  $('sheet-path').hidden = isGroup;
-  $('choose-group').classList.toggle('on', isGroup);
-  $('choose-sheet').classList.toggle('on', !isGroup);
-  $('choose-group').setAttribute('aria-expanded', String(isGroup));
-  $('choose-sheet').setAttribute('aria-expanded', String(!isGroup));
+  const show = which === 'solo' ? 'solo' : which === 'sheet' ? 'sheet' : 'group';
+  $('group-path').hidden = show !== 'group';
+  $('sheet-path').hidden = show !== 'sheet';
+  $('solo-path').hidden = show !== 'solo';
+  ['group', 'sheet', 'solo'].forEach((name) => {
+    $(`choose-${name}`).classList.toggle('on', show === name);
+    $(`choose-${name}`).setAttribute('aria-expanded', String(show === name));
+  });
   if (window.history && window.history.replaceState) {
-    window.history.replaceState(null, '', `/?method=${which}`);
+    window.history.replaceState(null, '', `/?method=${show}`);
   }
 }
 
 $('choose-group').addEventListener('click', () => selectPath('group'));
 $('choose-sheet').addEventListener('click', () => selectPath('sheet'));
+$('choose-solo').addEventListener('click', () => selectPath('solo'));
 document.querySelectorAll('[data-onboarding-method]').forEach((link) => {
   link.addEventListener('click', (event) => {
     if (event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -505,7 +507,9 @@ fetch('/api/leaderboard').then(async (response) => {
 
 setEntryOnboarding(!window.BobaOnboarding || window.BobaOnboarding.shouldShow('entry'), false);
 const requestedPath = new URLSearchParams(window.location.search).get('method');
-if (requestedPath === 'group' || requestedPath === 'sheet') selectPath(requestedPath);
+if (requestedPath === 'group' || requestedPath === 'sheet' || requestedPath === 'solo') {
+  selectPath(requestedPath);
+}
 initializeDeadline();
 renderBudgetChoice();
 window.setInterval(renderDeadlineChoice, 60000);

@@ -8,7 +8,8 @@ this has to run on (no pip, no node — same wall Task 1 hit). It is a local
 single-group tool, so a threading stdlib server is genuinely enough.
 
 Routes
-    GET  /                       choose spreadsheet import or a group-order link
+    GET  /                       choose spreadsheet import, a group-order link, or solo
+    GET  /solo                   one person ordering just for themselves
     GET  /preview/<run_id>       review the parsed order, hand off to Tasks 3-4
     GET  /saved-orders[/<id>]    list or view this browser's finished orders
     GET  /template.csv           the order template, filled with real menu items
@@ -24,6 +25,7 @@ Routes
     POST /api/runs/<run_id>/rows/<n>  edit one row: any of {"drink", "size",
                                       "sugar", "ice", "milk", "toppings",
                                       "quantity", "person", "notes"}
+    POST /api/solo-orders        one person's drinks -> run_id + preview_url
     POST /api/runs/<run_id>/process   build the cart and return its handoff URL
     GET/POST /api/saved-orders   list or save completed cart snapshots
     GET  /api/saved-orders/<id>  retrieve one browser-owned snapshot
@@ -37,6 +39,7 @@ Routes
     PATCH/DELETE .../orders/<order_id>       manage an order with its edit token
     PATCH .../<room_id>/deadline             organizer changes the cutoff time
     PATCH .../<room_id>/budget               organizer sets the per-person cap
+    PATCH .../<room_id>/payers               organizer sets payer attribution
     POST .../<room_id>/fulfillment           organizer updates pickup status
     POST .../<lock|reopen|close|finalize>     organizer lifecycle controls
     GET  /api/health
@@ -58,7 +61,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import group_orders, importer, labels, menu, options, pipeline, runs, saved_orders, sheets, template
+from . import group_orders, importer, labels, menu, options, pipeline, runs, saved_orders, sheets, solo, template
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = importer.MAX_UPLOAD_BYTES + 512 * 1024  # payload plus multipart framing
@@ -228,6 +231,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/saved-orders" or re.fullmatch(
                 rf"/saved-orders/{SAVED_ORDER_ID_PATTERN}", path):
             return self._serve_static("saved-orders.html")
+
+        if path == "/solo":
+            return self._serve_static("solo.html")
 
         if path == "/api/health":
             return self._json({"ok": True, "stages": pipeline.status()})
@@ -413,6 +419,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._create_group_order()
             if path == "/api/saved-orders":
                 return self._create_saved_order()
+            if path == "/api/solo-orders":
+                return self._create_solo_order()
             match = re.fullmatch(
                 rf"/api/saved-orders/({SAVED_ORDER_ID_PATTERN})/repeat", path)
             if match:
@@ -465,6 +473,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload.get("order_date"),
                 payload.get("tip"),
                 payload.get("total_paid"),
+                payload.get("payers"),
             )
         except saved_orders.SavedOrderError as exc:
             return self._saved_order_error(exc)
@@ -472,6 +481,25 @@ class Handler(BaseHTTPRequestHandler):
             "ok": True,
             "order": order,
             "saved_order_url": f"/saved-orders/{order['id']}",
+        }, HTTPStatus.CREATED, {"Cache-Control": "no-store"})
+
+    def _create_solo_order(self):
+        """One person's drinks in, a normal pipeline run out."""
+        try:
+            payload = self._read_json()
+        except ValueError as exc:
+            return self._error(str(exc))
+        try:
+            run_id, saved = solo.create_run(
+                payload, restaurant_id=payload.get("restaurant_id"))
+        except solo.SoloOrderError as exc:
+            return self._error(str(exc), exc.status)
+        return self._json({
+            "ok": True,
+            "run_id": run_id,
+            "preview_url": f"/preview/{run_id}",
+            "run": pipeline.enrich(saved),
+            "stages": pipeline.status(),
         }, HTTPStatus.CREATED, {"Cache-Control": "no-store"})
 
     def _repeat_saved_order(self, order_id: str):
@@ -497,6 +525,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self):
         path = unquote(urlparse(self.path).path)
+        payer_match = re.fullmatch(
+            rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/payers", path)
+        if payer_match:
+            try:
+                payload = self._read_json()
+                room = group_orders.set_payers(
+                    payer_match.group(1), payload, self._organizer_token(payload))
+            except group_orders.GroupOrderError as exc:
+                return self._group_error(exc)
+            except ValueError as exc:
+                return self._error(str(exc))
+            return self._json({"ok": True, "session": room},
+                              extra={"Cache-Control": "no-store"})
         budget_match = re.fullmatch(
             rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/budget", path)
         if budget_match:

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#faf6f1">
+<title>Order just for you — Boba Builder</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/group-order.css">
+</head>
+<body class="participant-page">
+<a class="skip" href="#solo-form">Skip to your order</a>
+
+<header class="masthead participant-head">
+  <div class="wrap participant-wrap">
+    <p class="eyebrow">Solo order</p>
+    <h1><span class="cup" aria-hidden="true"></span> <span id="solo-title">Just for you</span></h1>
+    <p class="tagline" id="solo-subtitle">Your usuals, with every modifier remembered — reorder in
+      one tap. No install, no account. The cart still opens in Kung Fu Tea, where you pay.</p>
+  </div>
+</header>
+
+<main class="wrap participant-wrap">
+  <nav class="back-row top-links" aria-label="Previous step">
+    <a class="btn ghost" href="/">← All ordering options</a>
+    <a class="btn ghost" href="/saved-orders">Saved Orders</a>
+  </nav>
+
+  <section class="card store-card" aria-labelledby="store-h">
+    <div class="flow-heading">
+      <div>
+        <p class="step-label">Step 1</p>
+        <h2 id="store-h">Pick a store</h2>
+      </div>
+      <p>We remember your last store in this browser, so repeat visits skip this step.</p>
+    </div>
+    <div class="store-picker" id="store-picker">
+      <label for="store-search">Kung Fu Tea store</label>
+      <input id="store-search" type="search" role="combobox"
+             aria-autocomplete="list" aria-controls="store-results"
+             aria-expanded="false" autocomplete="off"
+             placeholder="Search by store name, city, address, state, or ZIP.">
+      <input id="solo-store" type="hidden">
+      <div class="store-results" id="store-results" role="listbox" hidden></div>
+    </div>
+    <p class="muted" id="store-current"></p>
+  </section>
+
+  <section class="card order-card" id="order-card">
+    <form id="solo-form" novalidate>
+      <div class="form-heading">
+        <div>
+          <p class="step-label">Step 2</p>
+          <h2 id="form-title">Your drink</h2>
+        </div>
+      </div>
+
+      <section class="favorites-panel" id="favorites-panel" aria-labelledby="favorites-title">
+        <div class="favorites-heading">
+          <div>
+            <p class="step-label">Saved in this browser</p>
+            <h3 id="favorites-title">My usuals</h3>
+          </div>
+          <span class="muted" id="favorites-count"></span>
+        </div>
+        <p class="muted favorites-why">This is the whole point of ordering solo here instead of in
+          the Kung Fu Tea app: each usual keeps your size, sweetness, ice, milk, and toppings,
+          so adding one to your order is a single tap — no rebuilding modifiers, no account.</p>
+        <div class="favorites-list" id="favorites-list"></div>
+        <div class="favorite-status" id="favorite-status" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="recent-panel" id="recent-panel" aria-labelledby="recent-title" hidden>
+        <div class="favorites-heading">
+          <div>
+            <p class="step-label">From your saved orders</p>
+            <h3 id="recent-title">Order it again</h3>
+          </div>
+        </div>
+        <div class="favorites-list" id="recent-list"></div>
+      </section>
+
+      <section class="popular-picks" id="popular-picks" aria-labelledby="popular-picks-title" hidden>
+        <div>
+          <p class="step-label">Popular at this store</p>
+          <h3 id="popular-picks-title">Top picks this week</h3>
+        </div>
+        <p class="popular-picks-help">Choose a base drink, then make the options yours.</p>
+        <div class="popular-picks-list" id="popular-picks-list"></div>
+      </section>
+
+      <section class="order-panel" id="order-panel" aria-labelledby="order-title" hidden>
+        <div class="favorites-heading">
+          <div>
+            <p class="step-label">Your solo order</p>
+            <h3 id="order-title">Drinks so far</h3>
+          </div>
+          <span class="muted" id="order-count"></span>
+        </div>
+        <div class="favorites-list" id="order-list"></div>
+        <label class="participant-field" for="person-name">
+          <span>Name <small>(optional — labels the cups)</small></span>
+          <input id="person-name" name="person" type="text" maxlength="80"
+                 autocomplete="name" placeholder="You">
+        </label>
+        <div class="submit-row">
+          <div>
+            <span class="muted estimate-label">Estimated order total</span>
+            <strong id="order-total">—</strong>
+          </div>
+          <button class="btn primary" id="check-order" type="button">Check my order →</button>
+        </div>
+      </section>
+
+      <div id="drink-picker">
+        <div class="picker-heading">
+          <label for="drink-search">Or pick a drink</label>
+          <span id="menu-count" class="muted"></span>
+        </div>
+        <div class="surprise-panel">
+          <button class="btn surprise-button" id="surprise-me" type="button"
+                  aria-describedby="surprise-hint" disabled>
+            <span aria-hidden="true">✨</span> Surprise Me
+          </button>
+          <p class="muted" id="surprise-hint">Picking an orderable drink and options…</p>
+        </div>
+        <input id="drink-search" class="menu-search" type="search"
+               autocomplete="off" placeholder="Search the menu" aria-controls="drink-list">
+        <div class="category-list" id="category-list" aria-label="Menu categories"></div>
+        <div class="drink-list" id="drink-list" aria-live="polite"></div>
+        <p class="menu-more muted" id="menu-more"></p>
+      </div>
+
+      <div id="drink-editor" class="hidden">
+        <article class="selected-drink">
+          <button class="selected-remove" id="remove-drink" type="button"
+                  aria-label="Remove selected drink">×</button>
+          <div>
+            <p class="selected-kicker">Selected drink</p>
+            <h3 id="selected-name"></h3>
+            <p id="selected-description" class="muted selected-description"></p>
+            <p id="selected-options" class="selected-options"></p>
+          </div>
+          <div class="selected-side">
+            <strong id="selected-price"></strong>
+            <div class="selected-actions">
+              <button class="text-button" id="reroll-drink" type="button">Surprise me again</button>
+              <button class="text-button" id="edit-drink" type="button">Edit</button>
+            </div>
+          </div>
+        </article>
+
+        <div id="modifier-groups" class="modifier-groups"></div>
+
+        <div class="order-extras">
+          <label class="participant-field quantity-field" for="quantity">
+            <span>Quantity</span>
+            <input id="quantity" name="quantity" type="number" inputmode="numeric"
+                   min="1" max="20" value="1" required>
+          </label>
+          <label class="participant-field notes-field" for="notes">
+            <span>Notes <small>(optional)</small></span>
+            <textarea id="notes" name="notes" rows="2" maxlength="500"
+                      placeholder="Anything the store should know?"></textarea>
+          </label>
+        </div>
+
+        <div class="favorite-save" id="favorite-save">
+          <label class="favorite-toggle" for="save-favorite">
+            <input id="save-favorite" type="checkbox">
+            <span>
+              <strong id="favorite-toggle-title">Save as a usual</strong>
+              <small id="favorite-toggle-help">Keep this drink and every option in this browser.</small>
+            </span>
+          </label>
+          <label class="participant-field favorite-name-field hidden" id="favorite-name-field" for="favorite-name">
+            <span>Usual name</span>
+            <input id="favorite-name" type="text" maxlength="50"
+                   placeholder="My usual">
+          </label>
+        </div>
+
+        <div class="submit-row">
+          <div>
+            <span class="muted estimate-label">Estimated item total</span>
+            <strong id="estimated-total">—</strong>
+          </div>
+          <button class="btn primary submit-drink" id="submit-drink" type="submit">Add to my order</button>
+        </div>
+      </div>
+      <div class="status" id="form-status" role="status" aria-live="polite"></div>
+    </form>
+  </section>
+
+  <p class="footnote participant-footnote">Nothing is ordered or paid for here. Checking your order
+    opens the same review and Kung Fu Tea cart handoff as every other way to order.</p>
+</main>
+
+<script src="/static/favorites.js"></script>
+<script src="/static/randomizer.js"></script>
+<script src="/static/leaderboard.js"></script>
+<script src="/static/solo.js"></script>
+</body>
+</html>

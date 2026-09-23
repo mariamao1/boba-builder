@@ -75,6 +75,20 @@ const money = (value) => `$${Number(value || 0).toFixed(2)}`;
 function costShareText(title, costs) {
   if (!costs || !(costs.by_person || []).length) return '';
   const lines = [title || 'Boba order'];
+  const split = costs.payer_split;
+  if (split) {
+    lines.push('Payer shares:');
+    split.payers.forEach((entry) => lines.push(`${entry.payer}: ${money(entry.total)}`));
+    lines.push(`Group total: ${money(split.total)}`, `Checkout: ${split.paid_by}`);
+    if (split.settlement.length) {
+      lines.push('Settle up:');
+      split.settlement.forEach((entry) =>
+        lines.push(`${entry.from} pays ${entry.to}: ${money(entry.amount)}`));
+    } else {
+      lines.push('No reimbursement is due.');
+    }
+    return lines.join('\n');
+  }
   costs.by_person.forEach((entry) => lines.push(`${entry.person}: ${money(entry.total)}`));
   lines.push(`Group total: ${money(costs.total)}`);
   lines.push(costs.estimated
@@ -116,6 +130,25 @@ function costBreakdown(costs, title) {
     list.append(item);
   });
   section.append(list);
+  const split = costs.payer_split;
+  if (split) {
+    const payers = el('div', 'cost-breakdown-payers');
+    payers.append(el('h4', null,
+      split.mode === 'even' ? 'Payer shares · even split' : 'Payer shares · assigned people'));
+    const payerList = el('ul', 'cost-breakdown-list');
+    split.payers.forEach((entry) => {
+      const item = el('li');
+      const label = el('span');
+      label.append(el('strong', null, entry.payer), el('small', null,
+        entry.people.length ? entry.people.join(', ') : 'Even share'));
+      item.append(label, el('strong', 'payer-owed', money(entry.total)));
+      payerList.append(item);
+    });
+    payers.append(payerList, el('strong', 'checkout-payer', `${split.paid_by} pays at checkout`));
+    (split.settlement || []).forEach((entry) => payers.append(el('p', 'settlement-line',
+      `${entry.from} reimburses ${entry.to} ${money(entry.amount)}`)));
+    section.append(payers);
+  }
   const total = el('div', 'cost-breakdown-total');
   total.append(el('span', null, costs.estimated ? 'Estimated group total' : 'Group total'),
     el('strong', null, money(costs.total)));
@@ -655,6 +688,7 @@ function sourceText(source) {
   if (source.kind === 'google_sheet') return 'your Google Sheet';
   if (source.kind === 'group_order') return 'your group order';
   if (source.kind === 'saved_order') return `saved order “${source.label || 'Boba order'}”`;
+  if (source.kind === 'solo') return 'your solo order';
   return source.filename ? `"${source.filename}"` : 'your file';
 }
 
@@ -671,6 +705,13 @@ function sourceOrigin(source) {
       href: `/saved-orders/${encodeURIComponent(source.saved_order_id)}`,
       backText: '← Back to saved order',
       stepText: 'Repeat saved order',
+    };
+  }
+  if (source && source.kind === 'solo') {
+    return {
+      href: '/solo',
+      backText: '← Back to solo order',
+      stepText: 'Solo order',
     };
   }
   return { href: '/?method=sheet', backText: '← Back to import', stepText: 'Import sheet' };
@@ -1210,6 +1251,7 @@ function saveFinishedOrder(run) {
       const payload = {run_id: runId, label, order_date: date.value};
       if (tip.value !== '') payload.tip = Number(tip.value);
       if (totalPaid.value !== '') payload.total_paid = Number(totalPaid.value);
+      if ((run.source || {}).payers) payload.payers = run.source.payers;
       const response = await fetch('/api/saved-orders', {
         method: 'POST',
         headers: {

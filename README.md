@@ -1,6 +1,7 @@
 # Boba Builder
 
-Collect a group's drinks with a shared link or import an existing spreadsheet,
+Collect a group's drinks with a shared link, import an existing spreadsheet,
+or order just for yourself with a one-tap reorder of your saved usuals —
 then turn them into one Kung Fu Tea cart ready to pay for in your own browser.
 
 ```
@@ -78,6 +79,11 @@ Python 3.11+, standard library only — nothing to install.
 - [x] **Task 25** — sold-out & availability detection at selection and
       cart-build time, with alternatives, re-choose, and clustered
       outage summaries (`docs/task25-availability.md`)
+- [x] **Task 26** — assigned or even multiple-payer shares, one checkout payer,
+      and final-receipt reimbursement instructions
+      (`docs/task26-multiple-payers.md`)
+- [x] **Task 27** — usuals-first solo ordering with one-tap reorder through
+      the shared preview and cart handoff (`docs/task27-solo-order.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.
