@@ -84,6 +84,10 @@ Python 3.11+, standard library only — nothing to install.
       (`docs/task26-multiple-payers.md`)
 - [x] **Task 27** — usuals-first solo ordering with one-tap reorder through
       the shared preview and cart handoff (`docs/task27-solo-order.md`)
+- [x] **Task 28** — named whole-order templates saved from any preview and
+      loaded into all three paths: solo drafts, spreadsheet-free runs, and
+      group rooms as pending expected orders awaiting confirmation
+      (`docs/task28-order-templates.md`)
 
 `app/pipeline.py` documents the stage contract. `python3 -m app.pipeline` prints
 what is wired.

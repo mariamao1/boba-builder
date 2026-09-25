@@ -55,11 +55,42 @@
     };
   }
 
+  // A saved-order manifest item back into an editable drink payload. Placed
+  // lines keep modifiers as {axis, name} options rather than flat fields,
+  // so axes are mapped back and multi-quantity toppings are expanded.
+  function savedItemPayload(item) {
+    const source = item || {};
+    const payload = {
+      drink: String(source.drink || '').trim(),
+      size: '',
+      sugar: '',
+      ice: '',
+      milk: '',
+      temperature: '',
+      toppings: [],
+      quantity: Math.max(1, Number(source.quantity) || 1),
+      notes: String(source.notes || ''),
+    };
+    (source.options || []).forEach((option) => {
+      if (!option || !option.name) return;
+      if (option.axis === 'toppings') {
+        const times = Math.max(1, Math.min(20, Number(option.quantity) || 1));
+        for (let index = 0; index < times; index += 1) {
+          payload.toppings.push(option.name);
+        }
+      } else if (Object.prototype.hasOwnProperty.call(payload, option.axis)) {
+        payload[option.axis] = option.name;
+      }
+    });
+    return payload;
+  }
+
   if (typeof window !== 'undefined') {
     window.BobaSolo = {
       quickPayload: quickPayload,
       validatePayload: validatePayload,
       buildOrderPayload: buildOrderPayload,
+      savedItemPayload: savedItemPayload,
     };
   }
 
@@ -84,6 +115,8 @@
     favoriteStatus: $('favorite-status'),
     recentPanel: $('recent-panel'),
     recentList: $('recent-list'),
+    templatePanel: $('template-panel'),
+    templateList: $('template-list'),
     popularPicks: $('popular-picks'),
     popularPicksList: $('popular-picks-list'),
     picker: $('drink-picker'),
@@ -289,6 +322,7 @@
     elements.surpriseMe.disabled = true;
     elements.surpriseHint.textContent = 'Loading the menu…';
     renderFavorites();
+    renderTemplates();
     elements.popularPicks.hidden = true;
     try {
       const data = await request(`/api/menu?restaurant_id=${encodeURIComponent(restaurantId)}`);
@@ -302,6 +336,7 @@
       renderCategories();
       renderDrinkList();
       renderFavorites();
+      renderTemplates();
       void loadPopularPicks();
     } catch (error) {
       elements.surpriseHint.textContent = error.message;
@@ -504,6 +539,122 @@
     elements.editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
+  /* --- templates: a whole order as a solo starting point ------------------ */
+
+  function renderTemplates() {
+    if (!window.BobaOrderTemplates || !elements.templatePanel) return;
+    const templates = window.BobaOrderTemplates.list(window.localStorage, restaurantId);
+    elements.templatePanel.hidden = !templates.length;
+    elements.templateList.textContent = '';
+    templates.forEach((template) => {
+      const card = node('div', 'favorite-row');
+      const label = node('div', 'favorite-label');
+      label.append(node('strong', null, template.name));
+      const cups = window.BobaOrderTemplates.cupsCount(template);
+      const people = window.BobaOrderTemplates.peopleCount(template);
+      label.append(node('span', 'muted',
+        `${plural(cups, 'cup')} · ${plural(people, 'person', 'people')}`));
+      const actions = node('div', 'favorite-actions');
+      const load = node('button', 'btn primary compact', 'Load drinks →');
+      load.type = 'button';
+      load.setAttribute('aria-label', `Load ${template.name} drinks into your solo order`);
+      load.addEventListener('click', () => loadTemplate(template));
+      const remove = node('button', 'text-button', 'Remove');
+      remove.type = 'button';
+      remove.addEventListener('click', () => {
+        window.BobaOrderTemplates.remove(window.localStorage, template.id);
+        renderTemplates();
+      });
+      actions.append(load, remove);
+      card.append(label, actions);
+      elements.templateList.append(card);
+    });
+  }
+
+  // Menu-checked bulk load shared by templates and saved orders: each drink
+  // is verified against the current menu before joining the draft. Solo
+  // loading restores drinks, not people — names stay behind because this
+  // order is one person's — and entries the current menu no longer
+  // understands are skipped with their reason, since the draft has no edit
+  // flow to fix them in.
+  function loadDrinkEntries(sourceName, drinks, people) {
+    const keys = (people || [])
+      .map((name) => normalized(String(name || ''))).filter(Boolean);
+    const multi = new Set(keys).size > 1;
+    let added = 0;
+    const skipped = [];
+    (drinks || []).forEach((drink, index) => {
+      const check = (menu && window.BobaOrderTemplates)
+        ? window.BobaOrderTemplates.entryCompatibility(drink, menu)
+        : { ok: true, payload: drink };
+      if (!check.ok) {
+        skipped.push(drink.drink);
+        return;
+      }
+      const who = String((people || [])[index] || '').trim();
+      const detail = (multi && who ? `${who} · ` : '')
+        + favoriteOptionsText(check.payload);
+      if (addToDraft(check.payload, check.payload.drink, detail)) added += 1;
+    });
+    const first = String((people || [])[0] || '').trim();
+    const singleOwner = first && keys.length && keys.every((key) => key === keys[0])
+      && first.toLocaleLowerCase() !== 'unlabelled' ? first : '';
+    if (singleOwner && !elements.person.value.trim()) elements.person.value = singleOwner;
+    if (!added && !skipped.length) {
+      setFavoriteStatus('That order has no drinks to load.', 'err');
+      return;
+    }
+    let message = `Loaded ${sourceName} — ${plural(draftOrder.length, 'drink')} in your order.`;
+    if (skipped.length) {
+      message += ` Skipped ${plural(skipped.length, 'drink')}: ${skipped.join(', ')} `
+        + '— no longer on this menu.';
+    }
+    setFavoriteStatus(message, skipped.length ? 'err' : '');
+    elements.orderPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function loadTemplate(template) {
+    if (!window.BobaOrderTemplates) return;
+    loadDrinkEntries(
+      template.name,
+      window.BobaOrderTemplates.toSoloDrinks(template),
+      (template.entries || []).map((entry) => entry.person));
+    renderTemplates();
+  }
+
+  // A saved order joins the draft the same way a template does — added to
+  // whatever is already there, so usuals, templates, and past orders mix
+  // before the single check. Anything unwanted is removed from the draft.
+  async function loadSavedOrder(order, button) {
+    const label = order.label || 'Saved order';
+    button.disabled = true;
+    setFavoriteStatus(`Loading ${label}…`, '');
+    let token = null;
+    try {
+      token = window.localStorage.getItem(SAVED_TOKEN_KEY);
+    } catch (_error) {
+      token = null;
+    }
+    try {
+      const data = await request(`/api/saved-orders/${encodeURIComponent(order.id)}`, {
+        headers: { 'X-Saved-Orders-Token': token },
+      });
+      const items = ((data && data.order) || {}).items || [];
+      if (!items.length) {
+        setFavoriteStatus('That saved order has no placed drinks to load.', 'err');
+        button.disabled = false;
+        return;
+      }
+      loadDrinkEntries(
+        label,
+        items.map((item) => savedItemPayload(item)),
+        items.map((item) => item.person));
+    } catch (error) {
+      setFavoriteStatus(error.message, 'err');
+      button.disabled = false;
+    }
+  }
+
   /* --- recent saved orders ------------------------------------------------ */
 
   async function loadRecent() {
@@ -534,23 +685,12 @@
         (total, item) => total + (Number(item.quantity) || 1), 0);
       label.append(node('span', 'muted',
         `${plural(cups, 'cup')} · ${order.created_at ? String(order.created_at).slice(0, 10) : ''}`));
-      const repeat = node('button', 'btn compact', 'Order again →');
-      repeat.type = 'button';
-      repeat.addEventListener('click', async () => {
-        repeat.disabled = true;
-        try {
-          const data = await request(`/api/saved-orders/${encodeURIComponent(order.id)}/repeat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Saved-Orders-Token': token },
-            body: '{}',
-          });
-          window.location.href = data.preview_url;
-        } catch (error) {
-          setFavoriteStatus(error.message, 'err');
-          repeat.disabled = false;
-        }
-      });
-      card.append(label, repeat);
+      const add = node('button', 'btn compact', 'Add to my order →');
+      add.type = 'button';
+      add.setAttribute('aria-label',
+        `Add ${order.label || 'saved order'} drinks to your solo order`);
+      add.addEventListener('click', () => loadSavedOrder(order, add));
+      card.append(label, add);
       elements.recentList.append(card);
     });
   }

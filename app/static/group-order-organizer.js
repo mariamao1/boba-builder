@@ -90,6 +90,13 @@ const elements = {
   continuePreview: document.getElementById('continue-preview'),
   finalizeCopy: document.getElementById('finalize-copy'),
   actionStatus: document.getElementById('action-status'),
+  templateForm: document.getElementById('template-form'),
+  templateSelect: document.getElementById('template-select'),
+  templateCount: document.getElementById('template-count'),
+  seedTemplate: document.getElementById('seed-template'),
+  submitAll: document.getElementById('submit-all'),
+  templateStatus: document.getElementById('template-status'),
+  suggestionList: document.getElementById('suggestion-list'),
 };
 
 let organizerToken = readToken();
@@ -879,9 +886,149 @@ function render() {
   renderBudget(true);
   renderPayers(true);
   renderFulfillment();
+  renderTemplates();
   renderOrders();
   renderDrinkTotals();
   renderCosts();
+}
+
+/* --- expected orders: a template as pending confirmations ---------------- */
+
+function templatesForStore() {
+  if (!window.BobaOrderTemplates || !session) return [];
+  return window.BobaOrderTemplates.list(window.localStorage, session.restaurant_id);
+}
+
+function renderTemplates() {
+  if (!elements.templateForm || !window.BobaOrderTemplates) return;
+  const templates = templatesForStore();
+  elements.templateSelect.textContent = '';
+  if (!templates.length) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'No saved templates for this store — save one from any order preview.';
+    elements.templateSelect.append(empty);
+    elements.templateCount.textContent = '';
+  } else {
+    elements.templateCount.textContent = `(${templates.length} saved)`;
+    templates.forEach((template) => {
+      const option = document.createElement('option');
+      option.value = template.id;
+      const people = window.BobaOrderTemplates.peopleCount(template);
+      const cups = window.BobaOrderTemplates.cupsCount(template);
+      option.textContent = `${template.name} — ${people} ${people === 1 ? 'person' : 'people'}, `
+        + `${cups} ${cups === 1 ? 'cup' : 'cups'}`;
+      elements.templateSelect.append(option);
+    });
+  }
+  elements.seedTemplate.disabled = !templates.length || session.status === 'closed';
+
+  const suggestions = (session && session.suggestions) || [];
+  elements.submitAll.disabled = !suggestions.length || session.status === 'closed';
+  elements.suggestionList.textContent = '';
+  if (!suggestions.length) {
+    elements.suggestionList.append(node('p', 'muted',
+      'No expected orders. Confirmed drinks appear under Submitted orders below.'));
+    return;
+  }
+  const heading = node('p', 'step-label', `Waiting on ${plural(suggestions.length, 'person', 'people')}`);
+  elements.suggestionList.append(heading);
+  const list = node('div', 'person-lines');
+  suggestions.forEach((suggestion) => {
+    const line = node('article', 'organizer-order-line expected-line');
+    const title = node('div', 'order-line-title');
+    title.append(document.createTextNode(`${suggestion.person} — ${suggestion.drink}`));
+    if (suggestion.quantity > 1) title.append(node('span', 'group-order-qty', ` ×${suggestion.quantity}`));
+    line.append(title, node('p', 'group-order-detail', orderDetails(suggestion)));
+    const remove = node('button', 'text-button remove-line', 'Remove');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `Remove expected ${suggestion.drink} for ${suggestion.person}`);
+    remove.addEventListener('click', () => removeSuggestion(suggestion, remove));
+    line.append(remove);
+    list.append(line);
+  });
+  elements.suggestionList.append(list);
+}
+
+async function seedFromTemplate(event) {
+  event.preventDefault();
+  const template = templatesForStore()
+    .find((candidate) => candidate.id === elements.templateSelect.value);
+  if (!template) {
+    setStatus(elements.templateStatus, 'Choose a saved template first.', 'err');
+    return;
+  }
+  const waiting = ((session && session.suggestions) || []).length;
+  if (waiting && !window.confirm(
+    `Replace the ${waiting} waiting expected order${waiting === 1 ? '' : 's'} with ${template.name}?`)) {
+    return;
+  }
+  elements.seedTemplate.disabled = true;
+  setStatus(elements.templateStatus, `Loading ${template.name} as expected orders…`, 'busy');
+  try {
+    const data = await request(`${apiBase}/suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: template.entries, mode: 'replace' }),
+    });
+    applyPublicSession(data.session);
+    setStatus(elements.templateStatus,
+      `${template.name} is waiting on everyone — nothing is submitted until they confirm.`, 'ok');
+  } catch (error) {
+    setStatus(elements.templateStatus, error.message, 'err');
+    elements.seedTemplate.disabled = false;
+  }
+}
+
+// The load-and-finalize fast path: submitting the whole board at once is the
+// organizer explicitly ordering for everyone listed, including anyone who
+// hasn't confirmed. Every entry is re-validated server-side first, and the
+// Finalize button enables as soon as real orders exist.
+async function submitAllSuggestions() {
+  const suggestions = (session && session.suggestions) || [];
+  if (!suggestions.length) return;
+  if (!window.confirm(
+    `Submit all ${suggestions.length} expected order${suggestions.length === 1 ? '' : 's'} `
+    + 'as submitted drinks? This orders for everyone listed, even anyone who '
+    + "hasn't confirmed. People who are out should have their entry removed first.")) {
+    return;
+  }
+  elements.submitAll.disabled = true;
+  setStatus(elements.templateStatus, 'Submitting every expected order…', 'busy');
+  try {
+    const data = await request(`${apiBase}/suggestions/submit-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    applyPublicSession(data.session);
+    setStatus(elements.templateStatus,
+      `${data.submitted} ${data.submitted === 1 ? 'drink' : 'drinks'} submitted — `
+      + 'review them below, then Finalize & review cart.', 'ok');
+  } catch (error) {
+    setStatus(elements.templateStatus, error.message, 'err');
+    elements.submitAll.disabled = false;
+  }
+}
+
+async function removeSuggestion(suggestion, button) {
+  if (!window.confirm(`Remove the expected ${suggestion.drink} for ${suggestion.person}?`)) return;
+  button.disabled = true;
+  try {
+    const data = await request(
+      `${apiBase}/suggestions/${encodeURIComponent(suggestion.id)}`, { method: 'DELETE' });
+    applyPublicSession(data.session);
+  } catch (error) {
+    setStatus(elements.templateStatus, error.message, 'err');
+    button.disabled = false;
+  }
+}
+
+if (elements.templateForm) {
+  elements.templateForm.addEventListener('submit', seedFromTemplate);
+}
+if (elements.submitAll) {
+  elements.submitAll.addEventListener('click', submitAllSuggestions);
 }
 
 function applyPublicSession(updated) {

@@ -26,6 +26,7 @@ Routes
                                       "sugar", "ice", "milk", "toppings",
                                       "quantity", "person", "notes"}
     POST /api/solo-orders        one person's drinks -> run_id + preview_url
+    POST /api/template-runs      a saved whole-order template -> run_id + preview_url
     POST /api/runs/<run_id>/process   build the cart and return its handoff URL
     GET/POST /api/saved-orders   list or save completed cart snapshots
     GET  /api/saved-orders/<id>  retrieve one browser-owned snapshot
@@ -37,6 +38,10 @@ Routes
     GET  .../<room_id>/organizer      authenticated organizer room state
     POST /api/group-orders/<room_id>/orders  add an order while the room is open
     PATCH/DELETE .../orders/<order_id>       manage an order with its edit token
+    POST .../<room_id>/suggestions          organizer seeds expected orders
+    POST .../suggestions/submit-all         organizer submits every expected order
+    POST .../suggestions/<id>/confirm       anyone confirms one while open
+    DELETE .../suggestions/<id>             drop one expected order
     PATCH .../<room_id>/deadline             organizer changes the cutoff time
     PATCH .../<room_id>/budget               organizer sets the per-person cap
     PATCH .../<room_id>/payers               organizer sets payer attribution
@@ -61,7 +66,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import group_orders, importer, labels, menu, options, pipeline, runs, saved_orders, sheets, solo, template
+from . import group_orders, importer, labels, menu, options, order_templates, pipeline, runs, saved_orders, sheets, solo, template
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = importer.MAX_UPLOAD_BYTES + 512 * 1024  # payload plus multipart framing
@@ -421,6 +426,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._create_saved_order()
             if path == "/api/solo-orders":
                 return self._create_solo_order()
+            if path == "/api/template-runs":
+                return self._create_template_run()
             match = re.fullmatch(
                 rf"/api/saved-orders/({SAVED_ORDER_ID_PATTERN})/repeat", path)
             if match:
@@ -429,6 +436,21 @@ class Handler(BaseHTTPRequestHandler):
                 rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/orders", path)
             if match:
                 return self._add_group_order(match.group(1))
+            match = re.fullmatch(
+                rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/suggestions", path)
+            if match:
+                return self._seed_group_order_suggestions(match.group(1))
+            match = re.fullmatch(
+                rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/suggestions/submit-all",
+                path)
+            if match:
+                return self._submit_all_suggestions(match.group(1))
+            match = re.fullmatch(
+                rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/suggestions/"
+                rf"({GROUP_ORDER_LINE_ID_PATTERN})/confirm", path)
+            if match:
+                return self._confirm_group_order_suggestion(
+                    match.group(1), match.group(2))
             match = re.fullmatch(
                 rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/(lock|reopen|close)", path)
             if match:
@@ -501,6 +523,66 @@ class Handler(BaseHTTPRequestHandler):
             "run": pipeline.enrich(saved),
             "stages": pipeline.status(),
         }, HTTPStatus.CREATED, {"Cache-Control": "no-store"})
+
+    def _create_template_run(self):
+        """Load a saved whole-order template as a fresh editable run."""
+        try:
+            payload = self._read_json()
+        except ValueError as exc:
+            return self._error(str(exc))
+        try:
+            run_id, saved = order_templates.create_run(
+                payload, restaurant_id=payload.get("restaurant_id"))
+        except order_templates.OrderTemplateError as exc:
+            return self._error(str(exc), exc.status)
+        return self._json({
+            "ok": True,
+            "run_id": run_id,
+            "preview_url": f"/preview/{run_id}",
+            "run": pipeline.enrich(saved),
+            "stages": pipeline.status(),
+        }, HTTPStatus.CREATED, {"Cache-Control": "no-store"})
+
+    def _seed_group_order_suggestions(self, room_id: str):
+        try:
+            payload = self._read_json()
+            room = group_orders.seed_suggestions(
+                room_id, payload.get("entries"),
+                self._organizer_token(payload),
+                mode=payload.get("mode") or "replace",
+            )
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        except ValueError as exc:
+            return self._error(str(exc))
+        return self._json({"ok": True, "session": room},
+                          extra={"Cache-Control": "no-store"})
+
+    def _submit_all_suggestions(self, room_id: str):
+        try:
+            payload = self._read_json()
+            submitted, room = group_orders.submit_all_suggestions(
+                room_id, self._organizer_token(payload))
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        except ValueError as exc:
+            return self._error(str(exc))
+        return self._json({"ok": True, "submitted": len(submitted),
+                           "session": room},
+                          extra={"Cache-Control": "no-store"})
+
+    def _confirm_group_order_suggestion(self, room_id: str, suggestion_id: str):
+        try:
+            payload = self._read_json()
+            order, order_token, room = group_orders.confirm_suggestion(
+                room_id, suggestion_id, payload)
+        except group_orders.GroupOrderError as exc:
+            return self._group_error(exc)
+        except ValueError as exc:
+            return self._error(str(exc))
+        return self._json({"ok": True, "order": order, "order_token": order_token,
+                           "session": room}, HTTPStatus.CREATED,
+                          {"Cache-Control": "no-store"})
 
     def _repeat_saved_order(self, order_id: str):
         try:
@@ -592,6 +674,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path = unquote(urlparse(self.path).path)
+        match = re.fullmatch(
+            rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/suggestions/"
+            rf"({GROUP_ORDER_LINE_ID_PATTERN})",
+            path,
+        )
+        if match:
+            try:
+                room = group_orders.delete_suggestion(
+                    match.group(1), match.group(2),
+                    organizer_token=self._organizer_token(),
+                )
+            except group_orders.GroupOrderError as exc:
+                return self._group_error(exc)
+            return self._json({"ok": True, "session": room},
+                              extra={"Cache-Control": "no-store"})
         match = re.fullmatch(
             rf"/api/group-orders/({GROUP_ORDER_ID_PATTERN})/orders/({GROUP_ORDER_LINE_ID_PATTERN})",
             path,

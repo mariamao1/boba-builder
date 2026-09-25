@@ -67,6 +67,8 @@ const elements = {
   groupOrders: document.getElementById('group-orders'),
   groupOrderCount: document.getElementById('group-order-count'),
   refreshOrders: document.getElementById('refresh-orders'),
+  suggestionsCard: document.getElementById('suggestions-card'),
+  suggestionsList: document.getElementById('suggestions-list'),
 };
 
 let session = null;
@@ -77,6 +79,7 @@ let selectedItem = null;
 let selections = {};
 let editingOrderId = null;
 let editingFavoriteId = null;
+let confirmingSuggestionId = null;
 let addingFavoriteId = null;
 let refreshing = false;
 let ownedOrders = readStorage(storageKey, {});
@@ -271,7 +274,7 @@ function renderRoom() {
   }
   elements.roomStrip.append(summary);
   elements.orderCard.classList.toggle('hidden', !session.accepting_orders);
-  if (!session.accepting_orders && editingOrderId) resetEditor();
+  if (!session.accepting_orders && (editingOrderId || confirmingSuggestionId)) resetEditor();
   renderDeadline();
   renderBudget();
   renderFulfillment();
@@ -700,6 +703,7 @@ function resetEditor(options) {
   const keepStatus = options && options.keepStatus;
   editingOrderId = null;
   editingFavoriteId = null;
+  confirmingSuggestionId = null;
   selectedItem = null;
   selections = {};
   elements.person.required = true;
@@ -911,6 +915,7 @@ function saveFavorite(payload, existing) {
 
 function renderGroupOrders() {
   if (!session) return;
+  renderSuggestions();
   elements.groupOrderCount.textContent = String(session.summary.drinks);
   elements.groupOrderCount.setAttribute('aria-label', plural(session.summary.drinks, 'drink'));
   elements.groupOrders.textContent = '';
@@ -958,6 +963,126 @@ function renderGroupOrders() {
     list.append(card);
   });
   elements.groupOrders.append(list);
+}
+
+/* --- expected orders: confirm, change, or drop a pending entry ------------- */
+// A loaded template pre-fills the room with pending entries, never submitted
+// orders: someone who is out that day must be able to walk away without a
+// drink arriving in their name. Confirming converts one entry into a real
+// order (with its own edit token); changing confirms edited values instead.
+
+function renderSuggestions() {
+  if (!elements.suggestionsCard || !elements.suggestionsList) return;
+  const suggestions = (session && session.suggestions) || [];
+  elements.suggestionsCard.hidden = !suggestions.length;
+  elements.suggestionsList.textContent = '';
+  suggestions.forEach((suggestion) => {
+    const card = node('article', 'group-order');
+    const copy = node('div');
+    copy.append(node('p', 'order-person', suggestion.person));
+    copy.append(node('h3', null, suggestion.drink));
+    copy.append(node('p', 'group-order-detail', orderDetails(suggestion)));
+    const cost = node('div', 'group-order-cost');
+    if (suggestion.quantity > 1) cost.append(node('span', 'group-order-qty', `×${suggestion.quantity}`));
+    card.append(copy, cost);
+    if (session.accepting_orders) {
+      const actions = node('div', 'group-order-actions');
+      const confirm = node('button', 'btn primary compact', 'Confirm ✓');
+      confirm.type = 'button';
+      confirm.setAttribute('aria-label', `Confirm ${suggestion.drink} for ${suggestion.person}`);
+      confirm.addEventListener('click', () => confirmSuggestion(suggestion.id, {}, confirm));
+      const change = node('button', 'text-button', 'Change');
+      change.type = 'button';
+      change.addEventListener('click', () => changeSuggestion(suggestion));
+      const drop = node('button', 'text-button delete-order', 'Not me');
+      drop.type = 'button';
+      drop.setAttribute('aria-label', `Drop the expected ${suggestion.drink} for ${suggestion.person}`);
+      drop.addEventListener('click', () => dismissSuggestion(suggestion, drop));
+      actions.append(confirm, change, drop);
+      card.append(actions);
+    }
+    elements.suggestionsList.append(card);
+  });
+}
+
+async function confirmSuggestion(suggestionId, payload, button) {
+  const suggestion = ((session && session.suggestions) || [])
+    .find((entry) => entry.id === suggestionId);
+  if (!suggestion) {
+    setFormStatus('That expected order is no longer waiting.', 'err');
+    return;
+  }
+  if (button) button.disabled = true;
+  setFormStatus(`Confirming ${suggestion.drink} for ${suggestion.person}…`, 'busy');
+  try {
+    const data = await request(
+      `${apiBase}/suggestions/${encodeURIComponent(suggestionId)}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    setSession(data.session);
+    rememberOrder(data.order.id, data.order_token);
+    let savedFavorite = null;
+    if (elements.saveFavorite.checked && payload && payload.drink) {
+      try {
+        savedFavorite = saveFavorite(payload, null);
+      } catch (_error) {
+        savedFavorite = null;
+      }
+    }
+    resetEditor({ keepStatus: true });
+    let message = `${data.order.drink} confirmed for ${data.order.person} — `
+      + 'it is now a submitted order you can still edit or remove.';
+    if (savedFavorite) message += ` ${savedFavorite.name} is now in My usuals.`;
+    setFormStatus(message, 'ok');
+    renderRoom();
+    renderFavorites();
+    renderGroupOrders();
+    refreshLeaderboard();
+  } catch (error) {
+    setFormStatus(error.message, 'err');
+    if (button) button.disabled = false;
+    if (error.code === 'deadline_passed') refreshSession(false);
+  }
+}
+
+function changeSuggestion(suggestion) {
+  const item = menu.items.find((candidate) => candidate.name === suggestion.drink);
+  if (!item) {
+    setFormStatus(`“${suggestion.drink}” is not on this menu right now, so it cannot be changed here.`, 'err');
+    return;
+  }
+  editingFavoriteId = null;
+  editingOrderId = null;
+  confirmingSuggestionId = suggestion.id;
+  elements.person.required = true;
+  elements.person.value = suggestion.person;
+  elements.quantity.value = String(suggestion.quantity || 1);
+  elements.notes.value = suggestion.notes || '';
+  elements.cancelEdit.classList.remove('hidden');
+  elements.submit.textContent = 'Confirm with changes';
+  elements.saveFavorite.checked = false;
+  elements.favoriteName.value = '';
+  chooseDrink(item, suggestion);
+  elements.orderCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function dismissSuggestion(suggestion, button) {
+  if (!window.confirm(
+    `Drop the expected ${suggestion.drink} for ${suggestion.person}? `
+    + 'They can still add a drink themselves.')) return;
+  button.disabled = true;
+  try {
+    const data = await request(
+      `${apiBase}/suggestions/${encodeURIComponent(suggestion.id)}`, { method: 'DELETE' });
+    setSession(data.session);
+    renderRoom();
+    renderGroupOrders();
+  } catch (error) {
+    window.alert(error.message);
+    button.disabled = false;
+  }
 }
 
 function editOrder(order) {
@@ -1020,6 +1145,25 @@ async function submitOrder(event) {
     } catch (error) {
       setFormStatus(error.message || 'This usual could not be saved.', 'err');
     }
+    return;
+  }
+  if (confirmingSuggestionId && !editingOrderId) {
+    // Change-and-confirm: the editor holds edits to a pending expected
+    // order, and submitting confirms those values as a real order.
+    if (!elements.form.reportValidity() || !validateSelections()) return;
+    updateEstimate();
+    if (budgetBlocked) {
+      setFormStatus('This selection is over the per-person budget. Reduce the price or quantity before submitting.', 'err');
+      return;
+    }
+    const payload = buildPayload();
+    const suggestionId = confirmingSuggestionId;
+    confirmingSuggestionId = null;
+    elements.submit.disabled = true;
+    const person = elements.person.value.trim();
+    writeStorage(participantNameKey, person);
+    writeStorage(nameKey, person);
+    await confirmSuggestion(suggestionId, payload, null);
     return;
   }
   if (!elements.form.reportValidity() || !validateSelections()) return;

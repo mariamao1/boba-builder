@@ -75,10 +75,24 @@
         <div class="favorites-heading">
           <div>
             <p class="step-label">From your saved orders</p>
-            <h3 id="recent-title">Order it again</h3>
+            <h3 id="recent-title">Add a saved order</h3>
           </div>
         </div>
+        <p class="muted">A past order joins your draft below alongside anything already there —
+          remove what you don't want, then check once.</p>
         <div class="favorites-list" id="recent-list"></div>
+      </section>
+
+      <section class="recent-panel" id="template-panel" aria-labelledby="template-title" hidden>
+        <div class="favorites-heading">
+          <div>
+            <p class="step-label">Whole orders for this store</p>
+            <h3 id="template-title">Start from a template</h3>
+          </div>
+        </div>
+        <p class="muted">A saved Friday order loads its drinks into your draft below — names stay
+          behind, since this order is just for you. Remove anything you don't want before checking.</p>
+        <div class="favorites-list" id="template-list"></div>
       </section>
 
       <section class="popular-picks" id="popular-picks" aria-labelledby="popular-picks-title" hidden>
@@ -198,6 +212,7 @@
 </main>
 
 <script src="/static/favorites.js"></script>
+<script src="/static/order-templates.js"></script>
 <script src="/static/randomizer.js"></script>
 <script src="/static/leaderboard.js"></script>
 <script src="/static/solo.js"></script>

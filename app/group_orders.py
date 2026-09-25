@@ -35,6 +35,7 @@ MAX_TTL_HOURS = 7 * 24
 RETENTION_DAYS = 7
 KEEP_SESSIONS = 200
 MAX_ORDERS = 200
+MAX_SUGGESTIONS = 60
 MAX_QUANTITY = 20
 MAX_BUDGET_CAP = 1000
 POPULARITY_WINDOW_DAYS = 7
@@ -616,6 +617,11 @@ def public_room(room: dict, *, now: dt.datetime | None = None) -> dict:
         "closed_at": room.get("closed_at"),
         "fulfillment": _fulfillment(room),
         "orders": orders,
+        # Expected orders from a loaded template (Task 28) are pending
+        # confirmation, never submitted: they are visible here but excluded
+        # from the summary, costs, and finalization until someone confirms.
+        "suggestions": [_public_order(order)
+                        for order in room.get("suggestions") or []],
         "summary": _summary(orders),
         "costs": cost_summary,
     }
@@ -822,6 +828,191 @@ def delete_order(room_id: str, order_id: str, *, order_token: str | None = None,
                 or _matches_secret(order_token, order.get("edit_token_hash"))):
             raise Forbidden("the order edit token is missing or invalid")
         room["orders"].remove(order)
+        room["updated_at"] = _timestamp(current)
+        _write(room)
+        return public_room(room, now=current)
+
+
+def _clean_suggestion_entries(entries) -> list[dict]:
+    """Validate template entries into order-shaped suggestion values."""
+    if not isinstance(entries, list) or not entries:
+        raise GroupOrderError("a template needs at least one named drink to seed")
+    if len(entries) > MAX_SUGGESTIONS:
+        raise GroupOrderError(
+            f"a group order holds at most {MAX_SUGGESTIONS} expected orders")
+    cleaned = []
+    for position, entry in enumerate(entries, 1):
+        try:
+            cleaned.append(_order_values(entry))
+        except GroupOrderError as exc:
+            raise GroupOrderError(f"suggestion {position}: {exc}") from exc
+    return cleaned
+
+
+def _find_suggestion(room: dict, suggestion_id: str) -> dict:
+    for suggestion in room.get("suggestions") or []:
+        if suggestion.get("id") == suggestion_id:
+            return suggestion
+    raise OrderNotFound("that expected order is no longer waiting")
+
+
+def seed_suggestions(room_id: str, entries, organizer_token: str | None, *,
+                     mode: str = "replace",
+                     now: dt.datetime | None = None) -> dict:
+    """Pre-populate a room with expected orders from a template.
+
+    The organizer-only starting point for a recurring group order. Seeded
+    entries are pending confirmation — visible to everyone with the link but
+    excluded from totals and finalization — so someone who is out that day
+    never silently gets a drink they didn't ask for. Seeding is allowed
+    while the room is locked (the organizer arranging the board) but never
+    once it is closed.
+    """
+    if mode not in ("replace", "append"):
+        raise GroupOrderError("mode must be replace or append")
+    current = _as_utc(now)
+    cleaned = _clean_suggestion_entries(entries)
+    with _room_lock(room_id):
+        room = _read(room_id)
+        if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
+            raise Forbidden("the organizer token is missing or invalid")
+        if _effective_status(room, current) == "closed":
+            raise RoomNotOpen("this group order is closed")
+        existing = room.get("suggestions") or []
+        if mode == "append" and len(existing) + len(cleaned) > MAX_SUGGESTIONS:
+            raise GroupOrderError(
+                f"a group order holds at most {MAX_SUGGESTIONS} expected orders")
+        timestamp = _timestamp(current)
+        seeded = [{
+            "id": secrets.token_urlsafe(15),
+            **values,
+            "created_at": timestamp,
+        } for values in cleaned]
+        room["suggestions"] = ([*existing, *seeded] if mode == "append" else seeded)
+        room["updated_at"] = timestamp
+        _write(room)
+        return public_room(room, now=current)
+
+
+def confirm_suggestion(room_id: str, suggestion_id: str, payload: dict, *,
+                       now: dt.datetime | None = None
+                       ) -> tuple[dict, str, dict]:
+    """Confirm one expected order into a real submitted order.
+
+    Anyone with the link may confirm while the room is open; ``payload`` may
+    carry changes (a different size, an extra topping) which are validated
+    exactly like a fresh submission. Returns ``(order, edit_token, room)``.
+    """
+    current = _as_utc(now)
+    if not isinstance(payload, dict):
+        raise GroupOrderError("order must be a JSON object")
+    with _room_lock(room_id):
+        room = _read(room_id)
+        _require_open(room, current)
+        suggestion = _find_suggestion(room, suggestion_id)
+        values = _order_values(payload, current=suggestion)
+        if len(room.get("orders") or []) >= MAX_ORDERS:
+            raise RoomFull(f"this group order has reached its {MAX_ORDERS}-order limit")
+        _check_availability(room, values)
+        edit_token = secrets.token_urlsafe(24)
+        order = {
+            "id": secrets.token_urlsafe(15),
+            "participant_id": secrets.token_urlsafe(9),
+            **values,
+            "created_at": _timestamp(current),
+            "updated_at": _timestamp(current),
+            "edit_token_hash": _secret_hash(edit_token),
+        }
+        _enforce_budget(room, [*(room.get("orders") or []), order])
+        room.setdefault("orders", []).append(order)
+        (room.get("suggestions") or []).remove(suggestion)
+        room["updated_at"] = _timestamp(current)
+        _write(room)
+        return _public_order(order), edit_token, public_room(room, now=current)
+
+
+def submit_all_suggestions(room_id: str, organizer_token: str | None, *,
+                           now: dt.datetime | None = None
+                           ) -> tuple[list[dict], dict]:
+    """Submit every expected order at once — the organizer fast path.
+
+    Loading a template plus this call is the whole "load the orders and
+    finalize" flow: the organizer explicitly takes responsibility for the
+    entire board, including anyone who hasn't confirmed. Every entry is
+    validated exactly like a fresh submission (availability, budget, room
+    cap) before anything is written, so a failure converts nothing.
+    Allowed while paused but never once closed. Returns
+    ``(submitted_orders, public_room)``.
+    """
+    current = _as_utc(now)
+    with _room_lock(room_id):
+        room = _read(room_id)
+        if not _matches_secret(organizer_token, room.get("organizer_token_hash")):
+            raise Forbidden("the organizer token is missing or invalid")
+        if _effective_status(room, current) == "closed":
+            raise RoomNotOpen("this group order is closed")
+        suggestions = room.get("suggestions") or []
+        if not suggestions:
+            raise GroupOrderError("there are no expected orders to submit")
+        existing = room.setdefault("orders", [])
+        if len(existing) + len(suggestions) > MAX_ORDERS:
+            raise RoomFull(
+                f"this group order has reached its {MAX_ORDERS}-order limit")
+        timestamp = _timestamp(current)
+        pending = []
+        for suggestion in suggestions:
+            values = {
+                field: suggestion.get(field, "")
+                for field in ("person", "drink", "size", "sugar", "ice",
+                              "milk", "temperature", "notes")
+            }
+            values["toppings"] = list(suggestion.get("toppings") or [])
+            values["quantity"] = suggestion.get("quantity", 1)
+            _check_availability(room, values)
+            pending.append(values)
+        _enforce_budget(room, [*existing, *pending])
+        submitted = []
+        for values in pending:
+            order = {
+                "id": secrets.token_urlsafe(15),
+                "participant_id": secrets.token_urlsafe(9),
+                **values,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "edit_token_hash": _secret_hash(secrets.token_urlsafe(24)),
+            }
+            existing.append(order)
+            submitted.append(_public_order(order))
+        room["suggestions"] = []
+        room["updated_at"] = timestamp
+        _write(room)
+        return submitted, public_room(room, now=current)
+
+
+def delete_suggestion(room_id: str, suggestion_id: str, *,
+                      organizer_token: str | None = None,
+                      now: dt.datetime | None = None) -> dict:
+    """Drop one expected order — the "I'm out this week" action.
+
+    The organizer may always remove one; anyone with the link may remove one
+    while the room is open, mirroring how anyone may add an order.
+    """
+    current = _as_utc(now)
+    with _room_lock(room_id):
+        room = _read(room_id)
+        organizer_can_manage = _matches_secret(
+            organizer_token, room.get("organizer_token_hash"))
+        status = _effective_status(room, current)
+        if status == "closed":
+            raise RoomNotOpen("this group order is closed")
+        if not organizer_can_manage:
+            if current >= _deadline(room):
+                raise DeadlinePassed(
+                    "the order deadline has passed; ask the organizer to extend it")
+            if status != "open":
+                raise RoomNotOpen(f"this group order is {status}")
+        suggestion = _find_suggestion(room, suggestion_id)
+        (room.get("suggestions") or []).remove(suggestion)
         room["updated_at"] = _timestamp(current)
         _write(room)
         return public_room(room, now=current)

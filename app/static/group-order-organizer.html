@@ -175,6 +175,27 @@
       </article>
     </section>
 
+    <section class="card template-manager" id="template-manager" aria-labelledby="template-heading">
+      <div class="template-summary">
+        <p class="step-label">Recurring group</p>
+        <h2 id="template-heading">Expected orders from a template</h2>
+        <p id="template-detail">Load a saved order as pending entries with everyone's usual drink.
+          Nothing is submitted until each person confirms — someone who is out that day
+          never gets a drink they didn't ask for. In a hurry, Submit all as ordered
+          submits the whole board yourself instead.</p>
+      </div>
+      <form class="template-form" id="template-form">
+        <label for="template-select">Order template <span class="muted" id="template-count"></span></label>
+        <select id="template-select"></select>
+        <div class="template-actions">
+          <button class="btn primary compact" id="seed-template" type="submit">Load as expected orders</button>
+          <button class="btn compact" id="submit-all" type="button">Submit all as ordered</button>
+        </div>
+        <div class="status" id="template-status" role="status" aria-live="polite"></div>
+      </form>
+      <div id="suggestion-list" aria-live="polite"></div>
+    </section>
+
     <div class="organizer-layout">
       <section class="card submissions-card" aria-labelledby="submissions-heading">
         <div class="organizer-section-heading">
@@ -242,6 +263,7 @@
 </dialog>
 
 <script src="/static/vendor/qrcode.min.js"></script>
+<script src="/static/order-templates.js"></script>
 <script src="/static/group-order-organizer.js"></script>
 </body>
 </html>

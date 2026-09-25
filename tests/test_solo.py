@@ -271,6 +271,36 @@ report(BobaSolo.buildOrderPayload('store-a', 'Mariam', drinks));
             ],
         })
 
+    def test_saved_item_payload_maps_option_axes_back_to_fields(self):
+        result = self.drive("""
+var item = {drink: 'Taro Slush', quantity: 2, notes: 'extra cold', options: [
+  {group: 'Size', axis: 'size', name: 'Large', quantity: 1},
+  {group: 'Sugar', axis: 'sugar', name: '50%', quantity: 1},
+  {group: 'Toppings', axis: 'toppings', name: 'Boba', quantity: 2},
+  {group: 'Toppings', axis: 'toppings', name: 'Pudding', quantity: 1},
+  {group: 'Mystery', axis: 'vibes', name: 'Cozy', quantity: 1}
+]};
+report(BobaSolo.savedItemPayload(item));
+""")
+        self.assertEqual(result, {
+            "drink": "Taro Slush", "size": "Large", "sugar": "50%",
+            "ice": "", "milk": "", "temperature": "",
+            "toppings": ["Boba", "Boba", "Pudding"],
+            "quantity": 2, "notes": "extra cold",
+        })
+
+    def test_saved_item_payload_defaults_missing_fields(self):
+        result = self.drive("""
+report({bare: BobaSolo.savedItemPayload({drink: 'Tea'}),
+        empty: BobaSolo.savedItemPayload(null)});
+""")
+        self.assertEqual(result["bare"], {
+            "drink": "Tea", "size": "", "sugar": "", "ice": "",
+            "milk": "", "temperature": "", "toppings": [],
+            "quantity": 1, "notes": "",
+        })
+        self.assertEqual(result["empty"]["drink"], "")
+
     def test_validate_rejects_what_the_server_would_reject(self):
         result = self.drive("""
 report({

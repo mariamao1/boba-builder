@@ -169,6 +169,17 @@
   </div>
 
   <div class="flow-panel" id="sheet-path" hidden>
+    <section class="card" id="sheet-template-card" aria-labelledby="sheet-template-h" hidden>
+      <div class="flow-heading">
+        <div>
+          <p class="choice-kicker">Recurring order</p>
+          <h2 id="sheet-template-h">Start from a saved template</h2>
+        </div>
+        <p>Skip the spreadsheet entirely: a saved order becomes a fresh checkable order for its store.</p>
+      </div>
+      <div class="favorites-list" id="sheet-template-list"></div>
+      <div class="status" id="sheet-template-status" role="status" aria-live="polite"></div>
+    </section>
     <section class="card" aria-labelledby="format-h">
       <div class="flow-heading">
         <div>
@@ -299,6 +310,7 @@
 
 <script src="/static/onboarding.js"></script>
 <script src="/static/leaderboard.js"></script>
+<script src="/static/order-templates.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

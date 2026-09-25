@@ -433,6 +433,76 @@ $('link-form').addEventListener('submit', (event) => {
   send(JSON.stringify({ sheet_url: url }), { 'Content-Type': 'application/json' });
 });
 
+/* --- saved whole-order templates: the no-spreadsheet path ----------------- */
+
+function templateStoreLabel(template) {
+  const found = availableStores.find((store) => store.restaurant_id === template.restaurant_id);
+  return found ? storeLabel(found) : 'its store';
+}
+
+function renderSheetTemplates() {
+  const card = $('sheet-template-card');
+  const list = $('sheet-template-list');
+  if (!card || !list || !window.BobaOrderTemplates) return;
+  const templates = window.BobaOrderTemplates.list(window.localStorage);
+  card.hidden = !templates.length;
+  list.textContent = '';
+  templates.forEach((template) => {
+    const row = document.createElement('div');
+    row.className = 'favorite-row';
+    const label = document.createElement('div');
+    label.className = 'favorite-label';
+    const name = document.createElement('strong');
+    name.textContent = template.name;
+    const detail = document.createElement('span');
+    detail.className = 'muted';
+    const cups = window.BobaOrderTemplates.cupsCount(template);
+    const people = window.BobaOrderTemplates.peopleCount(template);
+    detail.textContent = `${cups} ${cups === 1 ? 'cup' : 'cups'} · `
+      + `${people} ${people === 1 ? 'person' : 'people'} · ${templateStoreLabel(template)}`;
+    label.append(name, detail);
+    const use = document.createElement('button');
+    use.type = 'button';
+    use.className = 'btn primary compact';
+    use.textContent = 'Use template →';
+    use.setAttribute('aria-label', `Start a new order from ${template.name}`);
+    use.addEventListener('click', () => startFromTemplate(template, use));
+    row.append(label, use);
+    list.append(row);
+  });
+}
+
+async function startFromTemplate(template, button) {
+  const status = $('sheet-template-status');
+  const note = (kind, message) => {
+    status.className = `status ${kind}`;
+    status.textContent = message;
+  };
+  button.disabled = true;
+  note('', `Starting a fresh order from ${template.name}…`);
+  try {
+    const response = await fetch('/api/template-runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        restaurant_id: template.restaurant_id,
+        template_name: template.name,
+        entries: template.entries,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok || !data.preview_url) {
+      throw new Error(data.error || `Server said ${response.status}.`);
+    }
+    // A template is a starting point: the preview re-checks every entry
+    // against the live menu before anything reaches a cart.
+    window.location.href = data.preview_url;
+  } catch (error) {
+    note('err', `Couldn't start from that template. ${error.message}`);
+    button.disabled = false;
+  }
+}
+
 /* --- menu hints ---------------------------------------------------------- */
 
 function pills(values, limit) {
@@ -512,6 +582,7 @@ if (requestedPath === 'group' || requestedPath === 'sheet' || requestedPath === 
 }
 initializeDeadline();
 renderBudgetChoice();
+renderSheetTemplates();
 window.setInterval(renderDeadlineChoice, 60000);
 
 fetch('/api/stores').then(async (response) => {
@@ -523,6 +594,7 @@ fetch('/api/stores').then(async (response) => {
   $('store-count').textContent = `(${data.stores.length} locations)`;
   $('store-search').disabled = false;
   $('store-search').placeholder = 'Search city, ZIP, address, or store name';
+  renderSheetTemplates();
 }).catch((error) => {
   writeStatus(groupStatusBox, 'err', 'Stores couldn’t be loaded.', ` ${error.message}`);
 });

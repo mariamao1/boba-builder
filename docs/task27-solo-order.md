@@ -82,12 +82,15 @@ CSV/XLSX/Google Sheet ─ import ──────┘
 - `app/static/solo.html` + `app/static/solo.js` are the usuals-first page:
   remembered store, **My usuals** with one-tap **Reorder →** (adds to the
   draft) and **Customize**, up to three recent saved orders with
-  **Order again →**, popular picks, Surprise Me, then the full menu with the
-  same per-drink option groups as the group flow. The editor's submit adds to
-  the draft; **Check my order →** posts the whole draft as one run and lands
-  on the same preview. An unknown favorite drink is never silently
-  substituted — Reorder and Customize both report it — and switching stores
-  clears the draft rather than posting another store's modifiers.
+  **Add to my order →** (their placed drinks join the same draft, checked
+  against the current menu, instead of opening a separate preview),
+  templates that load whole past orders the same way, popular picks,
+  Surprise Me, then the full menu with the same per-drink option groups as
+  the group flow. The editor's submit adds to the draft; **Check my order →**
+  posts the whole draft as one run and lands on the same preview. An unknown
+  favorite drink is never silently substituted — Reorder and Customize both
+  report it — and switching stores clears the draft rather than posting
+  another store's modifiers.
 - The landing page (`/`) offers the solo path as a third card with its own
   panel; `preview.js` routes solo runs back to `/solo` with the step label
   "Solo order".

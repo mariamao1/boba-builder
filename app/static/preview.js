@@ -958,6 +958,108 @@ function appendOrderFooter(orderCard, run, rows, stats, matched) {
       + 'Prices are that menu\'s, before tax and fees — the real total comes from the '
       + 'store when the cart is built.'));
   }
+
+  orderCard.append(saveOrderTemplateSection(run));
+}
+
+function defaultTemplateName(run) {
+  const source = run.source || {};
+  if (source.template_name) return source.template_name;
+  if (source.title) return source.title;
+  if (source.label) return source.label;
+  if (source.filename) return source.filename.replace(/\.[^.]+$/, '');
+  return 'Friday boba';
+}
+
+async function templateStoreId(run) {
+  const source = run.source || {};
+  if (source.restaurant_id) return source.restaurant_id;
+  // Spreadsheet uploads predate per-run stores and use the default store.
+  try {
+    const response = await fetch('/api/stores');
+    const data = await response.json();
+    return data.default_restaurant_id || '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+// Saving the whole order — every name paired with its drink and full
+// modifier set — as a reusable starting point for any collection path.
+// Loading happens elsewhere (solo draft, sheet-path runs, group-room
+// expected orders); the preview is where all three paths converge, so it
+// is where a finished-looking order becomes next week's template.
+function saveOrderTemplateSection(run) {
+  const section = el('section', 'save-template');
+  section.append(el('h3', null, 'Save as an order template'));
+  section.append(el('p', 'muted',
+    'Keep this whole order — each person with their drink and every option — '
+    + 'in this browser. Next time, load it as a starting point and tweak, add, '
+    + 'or drop entries before committing.'));
+
+  if (!window.BobaOrderTemplates) {
+    section.append(el('p', 'muted', 'Templates are unavailable while offline.'));
+    return section;
+  }
+  const rows = (run.rows || []).filter((row) => row && (row.person || row.drink));
+  if (!rows.length) {
+    section.append(el('p', 'muted', 'Add at least one named drink before saving a template.'));
+    return section;
+  }
+
+  const form = el('form', 'save-order-form');
+  const name = el('input', 'cell-input');
+  name.type = 'text';
+  name.required = true;
+  name.maxLength = 80;
+  name.value = defaultTemplateName(run);
+  name.setAttribute('aria-label', 'Order template name');
+
+  const save = el('button', 'btn', 'Save template');
+  save.type = 'submit';
+  save.disabled = true;
+  const feedback = el('div', 'save-feedback');
+  feedback.textContent = 'Finding this order\u2019s store\u2026';
+
+  let restaurantId = '';
+  templateStoreId(run).then((resolved) => {
+    restaurantId = resolved;
+    if (!restaurantId) {
+      feedback.className = 'save-feedback error';
+      feedback.textContent = 'This order\u2019s store is unknown, so it cannot be saved as a template.';
+      return;
+    }
+    save.disabled = false;
+    feedback.textContent = '';
+    form.dataset.ready = 'true';
+  });
+
+  form.append(field('Template name', name), save);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const label = name.value.trim();
+    if (!label) {
+      feedback.className = 'save-feedback error';
+      feedback.textContent = 'Give this template a name first.';
+      name.focus();
+      return;
+    }
+    if (!restaurantId) return;
+    try {
+      const template = window.BobaOrderTemplates.fromRunRows(label, rows, restaurantId);
+      const saved = window.BobaOrderTemplates.save(window.localStorage, template);
+      const people = window.BobaOrderTemplates.peopleCount(saved);
+      const cups = window.BobaOrderTemplates.cupsCount(saved);
+      feedback.className = 'save-feedback ok';
+      feedback.textContent = `Saved ${saved.name} — ${plural(people, 'person', 'people')}, `
+        + `${plural(cups, 'cup')}. Load it from solo, the spreadsheet path, or a group room.`;
+    } catch (error) {
+      feedback.className = 'save-feedback error';
+      feedback.textContent = error.message || 'This template could not be saved.';
+    }
+  });
+  section.append(form, feedback);
+  return section;
 }
 
 function cartManifest(cart) {
